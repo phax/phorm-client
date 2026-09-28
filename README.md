@@ -1,5 +1,12 @@
 # phorm-client
 
+<!-- ph-badge-start -->
+[![Sonatype Central](https://maven-badges.sml.io/sonatype-central/com.helger/phorm-client/badge.svg)](https://maven-badges.sml.io/sonatype-central/com.helger/phorm-client/)
+[![javadoc](https://javadoc.io/badge2/com.helger/phorm-client/javadoc.svg)](https://javadoc.io/doc/com.helger/phorm-client)
+
+> If this project saved you some time or made your day a little easier, a star would mean a lot — it helps others find it too.
+<!-- ph-badge-end -->
+
 Java client library for the REST API of [phorm](https://github.com/phax/phorm), the standalone XML
 document validation service built on [phive](https://github.com/phax/phive).
 
@@ -145,7 +152,7 @@ Add the following to your `pom.xml` to use this artifact, replacing `x.y.z` with
 
 # News and noteworthy
 
-v1.0.0 - work in progress
+v1.0.0 - 2026-09-28
 * Initial release
 * Covers all five phorm REST APIs in JSON, XML and HTML representation
 * Returns the regular phive `ValidationResultList` and ddd `DocumentDetails` object models
@@ -158,3 +165,8 @@ v1.0.0 - work in progress
   country added to the phorm side rules later needs no new version of this library
 * `PhormClientException` carries an `EPhormErrorType` that tells a faulty request, an unavailable
   service and an unusable answer apart
+
+---
+
+My personal [Coding Styleguide](https://github.com/phax/meta/blob/master/CodingStyleguide.md) |
+It is appreciated if you star the GitHub project if you like it.
