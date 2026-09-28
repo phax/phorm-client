@@ -1,0 +1,13 @@
+.claude/
+.settings/
+.idea/
+target/
+
+*.iml
+*.pmd
+
+.project
+.classpath
+potential.md
+release.properties
+zz
