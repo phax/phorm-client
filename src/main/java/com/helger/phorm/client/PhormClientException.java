@@ -29,52 +29,93 @@ import com.helger.base.enforce.ValueEnforcer;
  * regular result body (see the <code>phorm.api.response.onfailure.http400</code> setting), and this
  * library returns it as an ordinary {@link PhormValidationResult} with
  * {@link PhormValidationResult#isSuccess()} being <code>false</code>.
+ * <p>
+ * Every instance carries an {@link EPhormErrorType}, so that a caller can distinguish a faulty
+ * request from an unavailable service and from an unusable answer without inspecting status codes:
+ *
+ * <pre>
+ * catch (final PhormClientException ex)
+ * {
+ *   switch (ex.getErrorType ())
+ *   {
+ *     case REQUEST_ERROR -&gt; ...
+ *     case SERVICE_UNAVAILABLE -&gt; ...
+ *     case RESPONSE_ERROR -&gt; ...
+ *   }
+ * }
+ * </pre>
  *
  * @author Philip Helger
  */
 public class PhormClientException extends Exception
 {
+  private final EPhormErrorType m_eErrorType;
   private final transient PhormRawResponse m_aResponse;
 
   /**
-   * Constructor without an HTTP response, e.g. for transport level problems.
+   * Constructor without an HTTP response, e.g. for a payload that could not be read.
    *
+   * @param eErrorType
+   *        The kind of problem. May not be <code>null</code>.
    * @param sMessage
    *        The error message. May not be <code>null</code>.
    */
-  public PhormClientException (@NonNull final String sMessage)
+  public PhormClientException (@NonNull final EPhormErrorType eErrorType, @NonNull final String sMessage)
   {
     super (sMessage);
+    ValueEnforcer.notNull (eErrorType, "ErrorType");
+    m_eErrorType = eErrorType;
     m_aResponse = null;
   }
 
   /**
    * Constructor without an HTTP response, e.g. for transport level problems.
    *
+   * @param eErrorType
+   *        The kind of problem. May not be <code>null</code>.
    * @param sMessage
    *        The error message. May not be <code>null</code>.
    * @param aCause
    *        The causing exception. May be <code>null</code>.
    */
-  public PhormClientException (@NonNull final String sMessage, @Nullable final Throwable aCause)
+  public PhormClientException (@NonNull final EPhormErrorType eErrorType,
+                               @NonNull final String sMessage,
+                               @Nullable final Throwable aCause)
   {
     super (sMessage, aCause);
+    ValueEnforcer.notNull (eErrorType, "ErrorType");
+    m_eErrorType = eErrorType;
     m_aResponse = null;
   }
 
   /**
    * Constructor for a problem that is described by an HTTP response.
    *
+   * @param eErrorType
+   *        The kind of problem. May not be <code>null</code>.
    * @param sMessage
    *        The error message. May not be <code>null</code>.
    * @param aResponse
    *        The offending HTTP response. May not be <code>null</code>.
    */
-  public PhormClientException (@NonNull final String sMessage, @NonNull final PhormRawResponse aResponse)
+  public PhormClientException (@NonNull final EPhormErrorType eErrorType,
+                               @NonNull final String sMessage,
+                               @NonNull final PhormRawResponse aResponse)
   {
     super (sMessage + " [HTTP " + aResponse.getStatusCode () + "]");
+    ValueEnforcer.notNull (eErrorType, "ErrorType");
     ValueEnforcer.notNull (aResponse, "Response");
+    m_eErrorType = eErrorType;
     m_aResponse = aResponse;
+  }
+
+  /**
+   * @return The kind of problem that prevented a result. Never <code>null</code>.
+   */
+  @NonNull
+  public final EPhormErrorType getErrorType ()
+  {
+    return m_eErrorType;
   }
 
   /**

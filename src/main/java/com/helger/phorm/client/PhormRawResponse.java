@@ -188,7 +188,9 @@ public class PhormRawResponse
   {
     final IJsonObject ret = getBodyAsJsonObject ();
     if (ret == null)
-      throw new PhormClientException ("The phorm response could not be parsed as a JSON object", this);
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response could not be parsed as a JSON object",
+                                      this);
     return ret;
   }
 

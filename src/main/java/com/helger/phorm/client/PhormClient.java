@@ -17,8 +17,10 @@
 package com.helger.phorm.client;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -28,7 +30,9 @@ import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.HttpClientResponseHandler;
 import org.apache.hc.core5.http.io.entity.ByteArrayEntity;
+import org.apache.hc.core5.http.io.entity.EntityTemplate;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.io.entity.InputStreamEntity;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -36,8 +40,10 @@ import org.slf4j.LoggerFactory;
 
 import com.helger.annotation.Nonempty;
 import com.helger.annotation.style.ReturnsMutableCopy;
+import com.helger.annotation.style.VisibleForTesting;
 import com.helger.base.builder.IBuilder;
 import com.helger.base.enforce.ValueEnforcer;
+import com.helger.base.io.iface.IHasInputStream;
 import com.helger.base.io.stream.StreamHelper;
 import com.helger.base.string.StringHelper;
 import com.helger.collection.commons.CommonsArrayList;
@@ -50,7 +56,6 @@ import com.helger.http.CHttpHeader;
 import com.helger.httpclient.HttpClientHelper;
 import com.helger.httpclient.HttpClientManager;
 import com.helger.httpclient.HttpClientSettings;
-import com.helger.io.resource.IReadableResource;
 import com.helger.json.IJson;
 import com.helger.json.IJsonArray;
 import com.helger.mime.CMimeType;
@@ -75,6 +80,12 @@ import com.helger.xml.microdom.IMicroDocument;
  * <code>...AsXML</code> and <code>...AsHtml</code> variants exist for callers that want to store or
  * display the server rendered representation instead.
  * <p>
+ * Every method that returns a typed result takes the payload as a <code>byte []</code> or as an
+ * {@link IHasInputStream}. The latter is streamed to phorm, so a large document is never held in
+ * memory as a whole - use {@link com.helger.base.io.stream.HasInputStream} to build one from an
+ * arbitrary {@link InputStream} supplier. The <code>...AsXML</code> and <code>...AsHtml</code>
+ * variants take a <code>byte []</code> only.
+ * <p>
  * Create one with the {@link #builder()} and reuse it - it holds an HTTP connection pool:
  *
  * <pre>
@@ -94,6 +105,13 @@ import com.helger.xml.microdom.IMicroDocument;
 public class PhormClient implements AutoCloseable
 {
   private static final Logger LOGGER = LoggerFactory.getLogger (PhormClient.class);
+  /**
+   * The characters a country code passed to the hybrid validation API may consist of. The value is
+   * deliberately <b>not</b> checked against {@link EPhormHybridCountry}, so that a country added to
+   * the phorm side hybrid rules later needs no new release of this library - only the URL safety is
+   * enforced here.
+   */
+  private static final Pattern COUNTRY_PATTERN = Pattern.compile ("[0-9A-Za-z_-]{1,20}");
 
   private final String m_sBaseURL;
   private final String m_sAPIPath;
@@ -229,7 +247,9 @@ public class PhormClient implements AutoCloseable
     }
     catch (final IOException ex)
     {
-      throw new PhormClientException ("Failed to invoke the phorm API at '" + m_sBaseURL + "'", ex);
+      throw new PhormClientException (EPhormErrorType.SERVICE_UNAVAILABLE,
+                                      "Failed to invoke the phorm API at '" + m_sBaseURL + "'",
+                                      ex);
     }
   }
 
@@ -247,17 +267,100 @@ public class PhormClient implements AutoCloseable
   @NonNull
   private PhormRawResponse _post (@NonNull @Nonempty final String sPath,
                                   @Nullable final String sQuery,
-                                  final byte @NonNull [] aPayload,
-                                  @NonNull final IMimeType aContentType,
+                                  @NonNull final HttpEntity aEntity,
                                   @NonNull final EPhormResponseFormat eFormat) throws PhormClientException
   {
     final String sURL = _buildURL (sPath, sQuery);
     if (LOGGER.isDebugEnabled ())
-      LOGGER.debug ("Invoking phorm API 'POST " + sURL + "' with " + aPayload.length + " bytes");
+    {
+      final long nContentLength = aEntity.getContentLength ();
+      LOGGER.debug ("Invoking phorm API 'POST " +
+                    sURL +
+                    "' with " +
+                    (nContentLength < 0 ? "a streamed payload" : nContentLength + " bytes"));
+    }
 
     final HttpPost aPost = new HttpPost (sURL);
-    aPost.setEntity (new ByteArrayEntity (aPayload, ContentType.create (aContentType.getAsString ())));
+    aPost.setEntity (aEntity);
     return _execute (aPost, eFormat);
+  }
+
+  /**
+   * Create the HTTP entity for a payload that is already in memory.
+   *
+   * @param aPayload
+   *        The payload bytes. May not be <code>null</code>.
+   * @param aContentType
+   *        The content type to be sent. May not be <code>null</code>.
+   * @return Never <code>null</code>.
+   */
+  @NonNull
+  private static HttpEntity _createEntity (final byte @NonNull [] aPayload, @NonNull final IMimeType aContentType)
+  {
+    ValueEnforcer.notNull (aPayload, "Payload");
+    return new ByteArrayEntity (aPayload, ContentType.create (aContentType.getAsString ()));
+  }
+
+  /**
+   * Create the HTTP entity for a payload that is delivered as a stream, so that a large document
+   * never has to be held in memory as a whole. A payload that can be read more than once - see
+   * {@link IHasInputStream#isReadMultiple()} - yields a repeatable entity, so that the HTTP client
+   * may replay the request; a payload that can be read only once yields a plain streaming entity.
+   *
+   * @param aPayload
+   *        The payload provider. May not be <code>null</code>.
+   * @param aContentType
+   *        The content type to be sent. May not be <code>null</code>.
+   * @return Never <code>null</code>.
+   * @throws PhormClientException
+   *         If the {@link InputStream} of a read-once payload cannot be opened.
+   */
+  @VisibleForTesting
+  @NonNull
+  static HttpEntity createStreamingEntity (@NonNull final IHasInputStream aPayload,
+                                           @NonNull final IMimeType aContentType) throws PhormClientException
+  {
+    ValueEnforcer.notNull (aPayload, "Payload");
+    final ContentType aCT = ContentType.create (aContentType.getAsString ());
+
+    // A payload that can be read more than once delivers a new InputStream for every write, so
+    // the entity may be replayed by the HTTP client
+    if (aPayload.isReadMultiple ())
+      return new EntityTemplate (aCT, aOS -> {
+        try (final InputStream aIS = aPayload.getInputStream ())
+        {
+          if (aIS == null)
+            throw new IOException ("Failed to open the InputStream of the payload " + aPayload);
+          aIS.transferTo (aOS);
+        }
+      });
+
+    // Only a single read is possible, so the stream must be opened up front
+    final InputStream aIS = aPayload.getInputStream ();
+    if (aIS == null)
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
+                                      "Failed to open the InputStream of the payload " + aPayload);
+    return new InputStreamEntity (aIS, aCT);
+  }
+
+  /**
+   * Classify an HTTP status code that did not deliver a usable result. A 4xx means phorm understood
+   * the request and refused it - the payload, the VESID or the token is at fault and repeating the
+   * identical call cannot help. A 5xx means phorm reported itself as broken. Anything else is an
+   * answer this library does not know what to do with.
+   *
+   * @param nStatusCode
+   *        The HTTP status code as received.
+   * @return Never <code>null</code>.
+   */
+  @NonNull
+  private static EPhormErrorType _getErrorType (final int nStatusCode)
+  {
+    if (nStatusCode >= CHttp.HTTP_INTERNAL_SERVER_ERROR)
+      return EPhormErrorType.SERVICE_UNAVAILABLE;
+    if (nStatusCode >= CHttp.HTTP_BAD_REQUEST)
+      return EPhormErrorType.REQUEST_ERROR;
+    return EPhormErrorType.RESPONSE_ERROR;
   }
 
   private static void _checkForError (@NonNull final PhormRawResponse aResponse,
@@ -274,9 +377,8 @@ public class PhormClient implements AutoCloseable
       return;
 
     if (aResponse.getStatusCode () == CHttp.HTTP_FORBIDDEN)
-      throw new PhormClientException ("phorm rejected the value of the '" +
-                                      CPhormClient.HEADER_X_TOKEN +
-                                      "' HTTP header",
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
+                                      "phorm rejected the value of the '" + CPhormClient.HEADER_X_TOKEN + "' HTTP header",
                                       aResponse);
 
     final String sBody = aResponse.getBodyAsString ();
@@ -285,16 +387,17 @@ public class PhormClient implements AutoCloseable
       sDetails = "<no response body>";
     else
       sDetails = sBody.length () > 500 ? sBody.substring (0, 500) + "..." : sBody;
-    throw new PhormClientException ("phorm returned an unexpected response: " + sDetails, aResponse);
+    throw new PhormClientException (_getErrorType (aResponse.getStatusCode ()),
+                                    "phorm returned an unexpected response: " + sDetails,
+                                    aResponse);
   }
 
   @NonNull
   private PhormValidationResult _postValidation (@NonNull @Nonempty final String sPath,
                                                  @Nullable final String sQuery,
-                                                 final byte @NonNull [] aPayload,
-                                                 @NonNull final IMimeType aContentType) throws PhormClientException
+                                                 @NonNull final HttpEntity aEntity) throws PhormClientException
   {
-    final PhormRawResponse aResponse = _post (sPath, sQuery, aPayload, aContentType, EPhormResponseFormat.JSON);
+    final PhormRawResponse aResponse = _post (sPath, sQuery, aEntity, EPhormResponseFormat.JSON);
     _checkForError (aResponse, EPhormResponseFormat.JSON);
     return PhormValidationResult.createFromResponse (aResponse, m_aIdentifierFactory);
   }
@@ -302,47 +405,90 @@ public class PhormClient implements AutoCloseable
   @NonNull
   private IMicroDocument _postAsXML (@NonNull @Nonempty final String sPath,
                                      @Nullable final String sQuery,
-                                     final byte @NonNull [] aPayload,
-                                     @NonNull final IMimeType aContentType) throws PhormClientException
+                                     @NonNull final HttpEntity aEntity) throws PhormClientException
   {
-    final PhormRawResponse aResponse = _post (sPath, sQuery, aPayload, aContentType, EPhormResponseFormat.XML);
+    final PhormRawResponse aResponse = _post (sPath, sQuery, aEntity, EPhormResponseFormat.XML);
     _checkForError (aResponse, EPhormResponseFormat.XML);
 
     final IMicroDocument ret = aResponse.getBodyAsMicroDocument ();
     if (ret == null)
-      throw new PhormClientException ("The phorm response could not be parsed as XML", aResponse);
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response could not be parsed as XML",
+                                      aResponse);
     return ret;
   }
 
   @NonNull
   private String _postAsHtml (@NonNull @Nonempty final String sPath,
                               @Nullable final String sQuery,
-                              final byte @NonNull [] aPayload,
-                              @NonNull final IMimeType aContentType) throws PhormClientException
+                              @NonNull final HttpEntity aEntity) throws PhormClientException
   {
-    final PhormRawResponse aResponse = _post (sPath, sQuery, aPayload, aContentType, EPhormResponseFormat.HTML);
+    final PhormRawResponse aResponse = _post (sPath, sQuery, aEntity, EPhormResponseFormat.HTML);
     _checkForError (aResponse, EPhormResponseFormat.HTML);
 
     final String ret = aResponse.getBodyAsString ();
     if (ret == null)
-      throw new PhormClientException ("The phorm response carries no HTML body", aResponse);
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response carries no HTML body",
+                                      aResponse);
     return ret;
   }
 
-  @NonNull
-  private static byte [] _getAllBytes (@NonNull final IReadableResource aResource) throws PhormClientException
+  /**
+   * Invoke the document type determination API with an already created request entity.
+   *
+   * @param aEntity
+   *        The request entity. May not be <code>null</code>.
+   * @return The determined document details, or <code>null</code> if phorm answered HTTP 204.
+   * @throws PhormClientException
+   *         On a transport problem, a rejected token or an unparsable payload.
+   */
+  @Nullable
+  private DocumentDetails _determineDocumentDetails (@NonNull final HttpEntity aEntity) throws PhormClientException
   {
-    ValueEnforcer.notNull (aResource, "Resource");
-    final byte [] ret = StreamHelper.getAllBytes (aResource);
-    if (ret == null)
-      throw new PhormClientException ("Failed to read the payload from '" + aResource + "'");
-    return ret;
+    final PhormRawResponse aResponse = _post (CPhormClient.PATH_DETERMINE_DOCTYPE,
+                                              null,
+                                              aEntity,
+                                              EPhormResponseFormat.JSON);
+    _checkForError (aResponse, null);
+    if (aResponse.getStatusCode () == CHttp.HTTP_NO_CONTENT)
+      return null;
+
+    return DocumentDetailsJsonHelper.getAsDocumentDetails (aResponse.getBodyAsJsonObjectOrThrow (),
+                                                           m_aIdentifierFactory);
+  }
+
+  /**
+   * Build the <code>country</code> query parameter of the hybrid validation API. The value is
+   * deliberately <b>not</b> checked against {@link EPhormHybridCountry}: a country that phorm
+   * learns about after this library was released must be passable without a change in here, and
+   * phorm falls back to its default for a country it does not know. Only the URL safety is
+   * enforced.
+   *
+   * @param sCountryID
+   *        The ID of the country. May be <code>null</code> or empty for none.
+   * @return <code>null</code> if no country parameter is to be sent.
+   * @throws PhormClientException
+   *         If the country code is not a plain code.
+   */
+  @VisibleForTesting
+  @Nullable
+  static String getCountryQuery (@Nullable final String sCountryID) throws PhormClientException
+  {
+    if (StringHelper.isEmpty (sCountryID))
+      return null;
+
+    // The value ends up in the URL as-is, so anything that is not a plain code is refused
+    if (!COUNTRY_PATTERN.matcher (sCountryID).matches ())
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
+                                      "The country code '" + sCountryID + "' contains unsupported characters");
+    return CPhormClient.QUERY_PARAM_COUNTRY + "=" + sCountryID;
   }
 
   @Nullable
-  private static String _getCountryQuery (@Nullable final EPhormHybridCountry eCountry)
+  private static String _getCountryQuery (@Nullable final EPhormHybridCountry eCountry) throws PhormClientException
   {
-    return eCountry == null ? null : CPhormClient.QUERY_PARAM_COUNTRY + "=" + eCountry.getID ();
+    return eCountry == null ? null : getCountryQuery (eCountry.getID ());
   }
 
   /**
@@ -447,11 +593,9 @@ public class PhormClient implements AutoCloseable
                                          final byte @NonNull [] aPayload) throws PhormClientException
   {
     ValueEnforcer.notNull (aVESID, "VESID");
-    ValueEnforcer.notNull (aPayload, "Payload");
     return _postValidation (CPhormClient.PATH_VALIDATE + aVESID.getAsSingleID (),
                             null,
-                            aPayload,
-                            CMimeType.APPLICATION_XML);
+                            _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -474,7 +618,8 @@ public class PhormClient implements AutoCloseable
   {
     final DVRCoordinate aVESID = DVRCoordinate.parseOrNull (sVESID);
     if (aVESID == null)
-      throw new PhormClientException ("The VESID '" + sVESID + "' could not be parsed");
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
+                                      "The VESID '" + sVESID + "' could not be parsed");
     return validate (aVESID, aPayload);
   }
 
@@ -484,17 +629,21 @@ public class PhormClient implements AutoCloseable
    * @param aVESID
    *        The rule set to validate against. May not be <code>null</code>.
    * @param aPayload
-   *        The resource delivering the XML document. May not be <code>null</code>.
+   *        The provider of the XML document. It is streamed to phorm, so a large document is never
+   *        held in memory as a whole. May not be <code>null</code>.
    * @return The validation result. An invalid document is a regular result, not an exception.
    * @throws PhormClientException
-   *         If the resource cannot be read, or on any of the problems listed at
+   *         If the payload cannot be opened, or on any of the problems listed at
    *         {@link #validate(DVRCoordinate, byte[])}.
    */
   @NonNull
   public PhormValidationResult validate (@NonNull final DVRCoordinate aVESID,
-                                         @NonNull final IReadableResource aPayload) throws PhormClientException
+                                         @NonNull final IHasInputStream aPayload) throws PhormClientException
   {
-    return validate (aVESID, _getAllBytes (aPayload));
+    ValueEnforcer.notNull (aVESID, "VESID");
+    return _postValidation (CPhormClient.PATH_VALIDATE + aVESID.getAsSingleID (),
+                            null,
+                            createStreamingEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -514,8 +663,9 @@ public class PhormClient implements AutoCloseable
                                        final byte @NonNull [] aPayload) throws PhormClientException
   {
     ValueEnforcer.notNull (aVESID, "VESID");
-    ValueEnforcer.notNull (aPayload, "Payload");
-    return _postAsXML (CPhormClient.PATH_VALIDATE + aVESID.getAsSingleID (), null, aPayload, CMimeType.APPLICATION_XML);
+    return _postAsXML (CPhormClient.PATH_VALIDATE + aVESID.getAsSingleID (),
+                       null,
+                       _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -535,11 +685,9 @@ public class PhormClient implements AutoCloseable
                                 final byte @NonNull [] aPayload) throws PhormClientException
   {
     ValueEnforcer.notNull (aVESID, "VESID");
-    ValueEnforcer.notNull (aPayload, "Payload");
     return _postAsHtml (CPhormClient.PATH_VALIDATE + aVESID.getAsSingleID (),
                         null,
-                        aPayload,
-                        CMimeType.APPLICATION_XML);
+                        _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -556,35 +704,25 @@ public class PhormClient implements AutoCloseable
   @Nullable
   public DocumentDetails determineDocumentDetails (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
-    final PhormRawResponse aResponse = _post (CPhormClient.PATH_DETERMINE_DOCTYPE,
-                                              null,
-                                              aPayload,
-                                              CMimeType.APPLICATION_XML,
-                                              EPhormResponseFormat.JSON);
-    _checkForError (aResponse, null);
-    if (aResponse.getStatusCode () == CHttp.HTTP_NO_CONTENT)
-      return null;
-
-    return DocumentDetailsJsonHelper.getAsDocumentDetails (aResponse.getBodyAsJsonObjectOrThrow (),
-                                                           m_aIdentifierFactory);
+    return _determineDocumentDetails (_createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
    * Determine the format and payload specifics of an XML document, without validating it.
    *
    * @param aPayload
-   *        The resource delivering the XML document. May not be <code>null</code>.
+   *        The provider of the XML document. It is streamed to phorm, so a large document is never
+   *        held in memory as a whole. May not be <code>null</code>.
    * @return The determined document details, or <code>null</code> if phorm could not determine
    *         them.
    * @throws PhormClientException
-   *         If the resource cannot be read, or on any of the problems listed at
+   *         If the payload cannot be opened, or on any of the problems listed at
    *         {@link #determineDocumentDetails(byte[])}.
    */
   @Nullable
-  public DocumentDetails determineDocumentDetails (@NonNull final IReadableResource aPayload) throws PhormClientException
+  public DocumentDetails determineDocumentDetails (@NonNull final IHasInputStream aPayload) throws PhormClientException
   {
-    return determineDocumentDetails (_getAllBytes (aPayload));
+    return _determineDocumentDetails (createStreamingEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -601,11 +739,9 @@ public class PhormClient implements AutoCloseable
   @Nullable
   public IMicroDocument determineDocumentDetailsAsXML (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
     final PhormRawResponse aResponse = _post (CPhormClient.PATH_DETERMINE_DOCTYPE,
                                               null,
-                                              aPayload,
-                                              CMimeType.APPLICATION_XML,
+                                              _createEntity (aPayload, CMimeType.APPLICATION_XML),
                                               EPhormResponseFormat.XML);
     _checkForError (aResponse, null);
     if (aResponse.getStatusCode () == CHttp.HTTP_NO_CONTENT)
@@ -613,7 +749,9 @@ public class PhormClient implements AutoCloseable
 
     final IMicroDocument ret = aResponse.getBodyAsMicroDocument ();
     if (ret == null)
-      throw new PhormClientException ("The phorm response could not be parsed as XML", aResponse);
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response could not be parsed as XML",
+                                      aResponse);
     return ret;
   }
 
@@ -635,24 +773,28 @@ public class PhormClient implements AutoCloseable
   @NonNull
   public PhormValidationResult determineAndValidate (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
-    return _postValidation (CPhormClient.PATH_DD_AND_VALIDATE, null, aPayload, CMimeType.APPLICATION_XML);
+    return _postValidation (CPhormClient.PATH_DD_AND_VALIDATE,
+                            null,
+                            _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
    * Determine the document type and validate against the matching rule set in one call.
    *
    * @param aPayload
-   *        The resource delivering the XML document. May not be <code>null</code>.
+   *        The provider of the XML document. It is streamed to phorm, so a large document is never
+   *        held in memory as a whole. May not be <code>null</code>.
    * @return The validation result including the determined document details.
    * @throws PhormClientException
-   *         If the resource cannot be read, or on any of the problems listed at
+   *         If the payload cannot be opened, or on any of the problems listed at
    *         {@link #determineAndValidate(byte[])}.
    */
   @NonNull
-  public PhormValidationResult determineAndValidate (@NonNull final IReadableResource aPayload) throws PhormClientException
+  public PhormValidationResult determineAndValidate (@NonNull final IHasInputStream aPayload) throws PhormClientException
   {
-    return determineAndValidate (_getAllBytes (aPayload));
+    return _postValidation (CPhormClient.PATH_DD_AND_VALIDATE,
+                            null,
+                            createStreamingEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -668,8 +810,9 @@ public class PhormClient implements AutoCloseable
   @NonNull
   public IMicroDocument determineAndValidateAsXML (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
-    return _postAsXML (CPhormClient.PATH_DD_AND_VALIDATE, null, aPayload, CMimeType.APPLICATION_XML);
+    return _postAsXML (CPhormClient.PATH_DD_AND_VALIDATE,
+                       null,
+                       _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -685,8 +828,9 @@ public class PhormClient implements AutoCloseable
   @NonNull
   public String determineAndValidateAsHtml (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
-    return _postAsHtml (CPhormClient.PATH_DD_AND_VALIDATE, null, aPayload, CMimeType.APPLICATION_XML);
+    return _postAsHtml (CPhormClient.PATH_DD_AND_VALIDATE,
+                        null,
+                        _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -701,7 +845,7 @@ public class PhormClient implements AutoCloseable
   @NonNull
   public PhormValidationResult hybridValidate (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    return hybridValidate (aPayload, null);
+    return hybridValidate (aPayload, (EPhormHybridCountry) null);
   }
 
   /**
@@ -724,30 +868,114 @@ public class PhormClient implements AutoCloseable
   public PhormValidationResult hybridValidate (final byte @NonNull [] aPayload,
                                                @Nullable final EPhormHybridCountry eCountry) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
     return _postValidation (CPhormClient.PATH_HYBRID_VALIDATE,
                             _getCountryQuery (eCountry),
-                            aPayload,
-                            CMimeType.APPLICATION_PDF);
+                            _createEntity (aPayload, CMimeType.APPLICATION_PDF));
+  }
+
+  /**
+   * Validate a ZUGFeRD / Factur-X hybrid PDF invoice against the rules of an arbitrary country.
+   * Use this instead of {@link #hybridValidate(byte[], EPhormHybridCountry)} if the country code
+   * comes from the processed data rather than from a decision in the code - a country that phorm
+   * learns about after this library was released is then passed on without a change in here. phorm
+   * falls back to its default for a country it does not know.
+   *
+   * @param aPayload
+   *        The PDF document to be validated. May not be <code>null</code>.
+   * @param sCountryID
+   *        The ID of the country whose specific rules shall be applied, e.g. <code>DE</code>. May
+   *        be <code>null</code> or empty to use the phorm side default.
+   * @return The validation result, carrying the PDF carrier layers first. An invalid document is a
+   *         regular result, not an exception.
+   * @throws PhormClientException
+   *         If the country code is not a plain code, or on any of the problems listed at
+   *         {@link #hybridValidate(byte[], EPhormHybridCountry)}.
+   */
+  @NonNull
+  public PhormValidationResult hybridValidate (final byte @NonNull [] aPayload,
+                                               @Nullable final String sCountryID) throws PhormClientException
+  {
+    return _postValidation (CPhormClient.PATH_HYBRID_VALIDATE,
+                            getCountryQuery (sCountryID),
+                            _createEntity (aPayload, CMimeType.APPLICATION_PDF));
+  }
+
+  /**
+   * Validate a ZUGFeRD / Factur-X hybrid PDF invoice with the phorm side default country rules.
+   *
+   * @param aPayload
+   *        The provider of the PDF document. It is streamed to phorm, so a large document is never
+   *        held in memory as a whole. May not be <code>null</code>.
+   * @return The validation result, carrying the PDF carrier layers first.
+   * @throws PhormClientException
+   *         On any of the problems listed at {@link #hybridValidate(byte[], EPhormHybridCountry)}.
+   */
+  @NonNull
+  public PhormValidationResult hybridValidate (@NonNull final IHasInputStream aPayload) throws PhormClientException
+  {
+    return hybridValidate (aPayload, (EPhormHybridCountry) null);
   }
 
   /**
    * Validate a ZUGFeRD / Factur-X hybrid PDF invoice.
    *
    * @param aPayload
-   *        The resource delivering the PDF document. May not be <code>null</code>.
+   *        The provider of the PDF document. It is streamed to phorm, so a large document is never
+   *        held in memory as a whole. May not be <code>null</code>.
    * @param eCountry
    *        The country whose specific rules shall be applied. May be <code>null</code>.
    * @return The validation result.
    * @throws PhormClientException
-   *         If the resource cannot be read, or on any of the problems listed at
+   *         If the payload cannot be opened, or on any of the problems listed at
    *         {@link #hybridValidate(byte[], EPhormHybridCountry)}.
    */
   @NonNull
-  public PhormValidationResult hybridValidate (@NonNull final IReadableResource aPayload,
+  public PhormValidationResult hybridValidate (@NonNull final IHasInputStream aPayload,
                                                @Nullable final EPhormHybridCountry eCountry) throws PhormClientException
   {
-    return hybridValidate (_getAllBytes (aPayload), eCountry);
+    return _postValidation (CPhormClient.PATH_HYBRID_VALIDATE,
+                            _getCountryQuery (eCountry),
+                            createStreamingEntity (aPayload, CMimeType.APPLICATION_PDF));
+  }
+
+  /**
+   * Validate a ZUGFeRD / Factur-X hybrid PDF invoice against the rules of an arbitrary country.
+   *
+   * @param aPayload
+   *        The provider of the PDF document. It is streamed to phorm, so a large document is never
+   *        held in memory as a whole. May not be <code>null</code>.
+   * @param sCountryID
+   *        The ID of the country whose specific rules shall be applied. May be <code>null</code> or
+   *        empty to use the phorm side default. See
+   *        {@link #hybridValidate(byte[], String)} for why this exists.
+   * @return The validation result.
+   * @throws PhormClientException
+   *         If the payload cannot be opened, if the country code is not a plain code, or on any of
+   *         the problems listed at {@link #hybridValidate(byte[], EPhormHybridCountry)}.
+   */
+  @NonNull
+  public PhormValidationResult hybridValidate (@NonNull final IHasInputStream aPayload,
+                                               @Nullable final String sCountryID) throws PhormClientException
+  {
+    return _postValidation (CPhormClient.PATH_HYBRID_VALIDATE,
+                            getCountryQuery (sCountryID),
+                            createStreamingEntity (aPayload, CMimeType.APPLICATION_PDF));
+  }
+
+  /**
+   * Validate a hybrid PDF invoice with the phorm side default country rules and get the server
+   * rendered XML representation.
+   *
+   * @param aPayload
+   *        The PDF document to be validated. May not be <code>null</code>.
+   * @return The <code>validationResults</code> XML document. Never <code>null</code>.
+   * @throws PhormClientException
+   *         On any of the problems listed at {@link #hybridValidate(byte[], EPhormHybridCountry)}.
+   */
+  @NonNull
+  public IMicroDocument hybridValidateAsXML (final byte @NonNull [] aPayload) throws PhormClientException
+  {
+    return hybridValidateAsXML (aPayload, (EPhormHybridCountry) null);
   }
 
   /**
@@ -766,11 +994,49 @@ public class PhormClient implements AutoCloseable
   public IMicroDocument hybridValidateAsXML (final byte @NonNull [] aPayload,
                                              @Nullable final EPhormHybridCountry eCountry) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
     return _postAsXML (CPhormClient.PATH_HYBRID_VALIDATE,
                        _getCountryQuery (eCountry),
-                       aPayload,
-                       CMimeType.APPLICATION_PDF);
+                       _createEntity (aPayload, CMimeType.APPLICATION_PDF));
+  }
+
+  /**
+   * Validate a hybrid PDF invoice against the rules of an arbitrary country and get the server
+   * rendered XML representation.
+   *
+   * @param aPayload
+   *        The PDF document to be validated. May not be <code>null</code>.
+   * @param sCountryID
+   *        The ID of the country whose specific rules shall be applied. May be <code>null</code> or
+   *        empty to use the phorm side default. See {@link #hybridValidate(byte[], String)} for why
+   *        this exists.
+   * @return The <code>validationResults</code> XML document. Never <code>null</code>.
+   * @throws PhormClientException
+   *         If the country code is not a plain code, or on any of the problems listed at
+   *         {@link #hybridValidate(byte[], EPhormHybridCountry)}.
+   */
+  @NonNull
+  public IMicroDocument hybridValidateAsXML (final byte @NonNull [] aPayload,
+                                             @Nullable final String sCountryID) throws PhormClientException
+  {
+    return _postAsXML (CPhormClient.PATH_HYBRID_VALIDATE,
+                       getCountryQuery (sCountryID),
+                       _createEntity (aPayload, CMimeType.APPLICATION_PDF));
+  }
+
+  /**
+   * Validate a hybrid PDF invoice with the phorm side default country rules and get the server
+   * rendered HTML report.
+   *
+   * @param aPayload
+   *        The PDF document to be validated. May not be <code>null</code>.
+   * @return The ready to render HTML report. Never <code>null</code>.
+   * @throws PhormClientException
+   *         On any of the problems listed at {@link #hybridValidate(byte[], EPhormHybridCountry)}.
+   */
+  @NonNull
+  public String hybridValidateAsHtml (final byte @NonNull [] aPayload) throws PhormClientException
+  {
+    return hybridValidateAsHtml (aPayload, (EPhormHybridCountry) null);
   }
 
   /**
@@ -789,11 +1055,33 @@ public class PhormClient implements AutoCloseable
   public String hybridValidateAsHtml (final byte @NonNull [] aPayload,
                                       @Nullable final EPhormHybridCountry eCountry) throws PhormClientException
   {
-    ValueEnforcer.notNull (aPayload, "Payload");
     return _postAsHtml (CPhormClient.PATH_HYBRID_VALIDATE,
                         _getCountryQuery (eCountry),
-                        aPayload,
-                        CMimeType.APPLICATION_PDF);
+                        _createEntity (aPayload, CMimeType.APPLICATION_PDF));
+  }
+
+  /**
+   * Validate a hybrid PDF invoice against the rules of an arbitrary country and get the server
+   * rendered HTML report.
+   *
+   * @param aPayload
+   *        The PDF document to be validated. May not be <code>null</code>.
+   * @param sCountryID
+   *        The ID of the country whose specific rules shall be applied. May be <code>null</code> or
+   *        empty to use the phorm side default. See {@link #hybridValidate(byte[], String)} for why
+   *        this exists.
+   * @return The ready to render HTML report. Never <code>null</code>.
+   * @throws PhormClientException
+   *         If the country code is not a plain code, or on any of the problems listed at
+   *         {@link #hybridValidate(byte[], EPhormHybridCountry)}.
+   */
+  @NonNull
+  public String hybridValidateAsHtml (final byte @NonNull [] aPayload,
+                                      @Nullable final String sCountryID) throws PhormClientException
+  {
+    return _postAsHtml (CPhormClient.PATH_HYBRID_VALIDATE,
+                        getCountryQuery (sCountryID),
+                        _createEntity (aPayload, CMimeType.APPLICATION_PDF));
   }
 
   /**

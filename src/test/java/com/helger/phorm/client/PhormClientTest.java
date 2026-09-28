@@ -16,12 +16,23 @@
  */
 package com.helger.phorm.client;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.nio.charset.StandardCharsets;
+
+import org.apache.hc.core5.http.HttpEntity;
 import org.junit.Test;
 
+import com.helger.base.io.nonblocking.NonBlockingByteArrayInputStream;
+import com.helger.base.io.nonblocking.NonBlockingByteArrayOutputStream;
+import com.helger.base.io.stream.HasInputStream;
+import com.helger.mime.CMimeType;
 import com.helger.peppolid.factory.SimpleIdentifierFactory;
 
 /**
@@ -103,8 +114,92 @@ public final class PhormClientTest
       }
       catch (final PhormClientException ex)
       {
+        assertEquals (EPhormErrorType.REQUEST_ERROR, ex.getErrorType ());
         assertEquals (-1, ex.getStatusCode ());
       }
+    }
+  }
+
+  @Test
+  public void testUnsupportedCountryCode ()
+  {
+    try (final PhormClient aClient = new PhormClient ("http://localhost:8080", "t"))
+    {
+      try
+      {
+        // Must fail before any HTTP connection is attempted
+        aClient.hybridValidate (new byte [0], "DE&other=1");
+        fail ("Expected a PhormClientException");
+      }
+      catch (final PhormClientException ex)
+      {
+        assertEquals (EPhormErrorType.REQUEST_ERROR, ex.getErrorType ());
+        assertEquals (-1, ex.getStatusCode ());
+      }
+    }
+  }
+
+  @Test
+  public void testCountryQuery () throws Exception
+  {
+    assertNull (PhormClient.getCountryQuery (null));
+    assertNull (PhormClient.getCountryQuery (""));
+    assertEquals ("country=DE", PhormClient.getCountryQuery (EPhormHybridCountry.DE.getID ()));
+    // A country that phorm learns about after this release must pass through unchanged, instead of
+    // requiring a new version of this library
+    assertEquals ("country=AT", PhormClient.getCountryQuery ("AT"));
+  }
+
+  @Test
+  public void testStreamingEntityReadMultiple () throws Exception
+  {
+    final byte [] aPayload = "<Invoice/>".getBytes (StandardCharsets.UTF_8);
+    final HttpEntity aEntity = PhormClient.createStreamingEntity (HasInputStream.multiple ( () -> new NonBlockingByteArrayInputStream (aPayload)),
+                                                                  CMimeType.APPLICATION_XML);
+    // Repeatable, so that the HTTP client may replay the request
+    assertTrue (aEntity.isRepeatable ());
+    // Unknown up front - the payload is sent chunked
+    assertEquals (-1, aEntity.getContentLength ());
+    assertEquals (CMimeType.APPLICATION_XML.getAsString (), aEntity.getContentType ());
+
+    // Twice, because "repeatable" is only worth something if it actually is
+    for (int i = 0; i < 2; ++i)
+      try (final NonBlockingByteArrayOutputStream aBAOS = new NonBlockingByteArrayOutputStream ())
+      {
+        aEntity.writeTo (aBAOS);
+        assertArrayEquals (aPayload, aBAOS.toByteArray ());
+      }
+  }
+
+  @Test
+  public void testStreamingEntityReadOnce () throws Exception
+  {
+    final byte [] aPayload = "%PDF-1.7".getBytes (StandardCharsets.UTF_8);
+    final HttpEntity aEntity = PhormClient.createStreamingEntity (HasInputStream.once ( () -> new NonBlockingByteArrayInputStream (aPayload)),
+                                                                  CMimeType.APPLICATION_PDF);
+    assertFalse (aEntity.isRepeatable ());
+    assertEquals (-1, aEntity.getContentLength ());
+
+    try (final NonBlockingByteArrayOutputStream aBAOS = new NonBlockingByteArrayOutputStream ())
+    {
+      aEntity.writeTo (aBAOS);
+      assertArrayEquals (aPayload, aBAOS.toByteArray ());
+    }
+  }
+
+  @Test
+  public void testStreamingEntityUnopenablePayload ()
+  {
+    try
+    {
+      PhormClient.createStreamingEntity (HasInputStream.once ( () -> null), CMimeType.APPLICATION_XML);
+      fail ("Expected a PhormClientException");
+    }
+    catch (final PhormClientException ex)
+    {
+      // Nothing was sent, so this is a faulty request and not an unavailable service
+      assertEquals (EPhormErrorType.REQUEST_ERROR, ex.getErrorType ());
+      assertFalse (ex.hasResponse ());
     }
   }
 }

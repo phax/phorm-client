@@ -37,6 +37,48 @@ compact of the three, and it is the only one that `PhiveJsonHelper` and `Documen
 can convert back into the phive and ddd object models. The `...AsXML` and `...AsHtml` variants pass
 the server rendered representation straight through.
 
+### Three failure modes, not one
+
+`PhormClientException` carries an `EPhormErrorType`. The split exists because a consumer that has
+to decide between *deferring* a document and *rejecting* it cannot treat "phorm is down" like
+"phorm refused this payload" - a verification service that is merely unavailable must never turn
+into a rejected document. phoss AP's `PhormDocumentVerifier` models exactly these three states
+internally, and that is where the shape comes from.
+
+| Type | Condition | Consumer reaction |
+|---|---|---|
+| `REQUEST_ERROR` | anything detected before sending, plus HTTP 4xx incl. 403 | fix the call or the configuration; retrying is pointless |
+| `SERVICE_UNAVAILABLE` | transport failure, HTTP 5xx | retry later |
+| `RESPONSE_ERROR` | usable status, unusable body | inspect `getResponse ()` |
+
+A rejected `X-Token` is deliberately a `REQUEST_ERROR` and not a `RESPONSE_ERROR`: phorm answered
+correctly, the caller is misconfigured.
+
+### Streamed payloads, not materialized ones
+
+The payload overloads take an `IHasInputStream` rather than an `IReadableResource`. Two reasons:
+
+* it is the wider type - `IReadableResource` is one - so nothing is lost, and a caller whose
+  document lives behind a store API (a filesystem or an S3 bucket reached through its own
+  abstraction) can supply one with `HasInputStream.multiple (...)` without first reading the whole
+  document into a `byte []`;
+* `isReadMultiple ()` carries exactly the information Apache HttpClient needs: a payload that can be
+  re-read becomes an `EntityTemplate` and is therefore *repeatable*, so a request may be replayed
+  after a connection level failure. A read-once payload becomes an `InputStreamEntity`, which
+  honestly reports itself as non-repeatable rather than replaying a consumed stream.
+
+The `...AsXML` and `...AsHtml` variants stay `byte []` only - they exist for rendering a report, not
+for pushing large documents.
+
+### The hybrid country is not a closed set
+
+`EPhormHybridCountry` matches what phorm accepts today, but the server logs a warning and falls back
+to its default for anything else - it does not reject. Modelling the parameter as an enum only would
+make *this library* the artifact that has to be released when phorm learns a new country. So every
+hybrid method also takes a plain `String`, checked against `[0-9A-Za-z_-]{1,20}` so that nothing
+unexpected reaches the URL, and otherwise passed through untouched. The same overload pair already
+exists for the VESID (`DVRCoordinate` and `String`), so the shape is not new.
+
 ### Typed models rather than an own DTO layer
 
 `PhormValidationResult` hands back phive's `ValidationResultList` and ddd's `DocumentDetails`
@@ -68,7 +110,7 @@ beyond the phive version.
 
 ## API shape
 
-One class per concern, eight in total:
+One class per concern, nine in total:
 
 | Class | Role |
 |---|---|
@@ -79,6 +121,7 @@ One class per concern, eight in total:
 | `PhormClientException` | everything that prevented a result, carrying the raw response |
 | `EPhormResponseFormat` | JSON / XML / HTML, mapped to the `Accept` header |
 | `EPhormHybridCountry` | `DE` / `FR` / `OTHER` for the hybrid PDF API, so kaltblut is not needed |
+| `EPhormErrorType` | why a call did not yield a result - faulty request, unavailable service, unusable answer |
 | `CPhormClient` | header name, API paths, query and JSON field names |
 
 `PhormValidationResult.createFromResponse (PhormRawResponse, IIdentifierFactory)` is public so the
@@ -90,4 +133,5 @@ the full phive and ddd deserialization against realistic phorm responses that wa
 * No retry or circuit breaking - configure it on the `HttpClientSettings` instead.
 * No async API. phorm calls are single request / single response.
 * No own error model. The phive `IError` list is the error model.
-* No `kaltblut` dependency for the hybrid country; a three constant enum covers the API.
+* No `kaltblut` dependency for the hybrid country; a three constant enum covers the API, and the
+  `String` overload covers everything phorm may add later.

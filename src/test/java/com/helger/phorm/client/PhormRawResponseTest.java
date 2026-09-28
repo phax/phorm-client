@@ -103,6 +103,8 @@ public final class PhormRawResponseTest
     }
     catch (final PhormClientException ex)
     {
+      // phorm answered, but not with something usable
+      assertEquals (EPhormErrorType.RESPONSE_ERROR, ex.getErrorType ());
       assertTrue (ex.hasResponse ());
       assertEquals (400, ex.getStatusCode ());
       assertEquals ("Failed to read the message body as XML", ex.getResponse ().getBodyAsString ());

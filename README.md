@@ -44,6 +44,20 @@ This library therefore distinguishes the two cases:
   `X-Token`, a payload that is not XML, an unresolvable VESID - raises a `PhormClientException`.
   It carries the offending `PhormRawResponse` including its unparsed body.
 
+## Telling the failure modes apart
+
+Not every `PhormClientException` means the same thing, and the difference decides whether retrying
+the identical call can ever help. Every exception therefore carries an `EPhormErrorType`:
+
+| `getErrorType ()` | Meaning | Examples |
+|---|---|---|
+| `REQUEST_ERROR` | phorm never produced a verdict because the request was faulty. Repeating it unchanged cannot help. | unreadable payload, unparsable or unresolvable VESID, payload that is not XML, missing or wrong `X-Token` (HTTP 403), any other 4xx |
+| `SERVICE_UNAVAILABLE` | phorm could not be reached, or reported itself as broken. Repeating the call later may succeed. | connection refused, timeout, any 5xx |
+| `RESPONSE_ERROR` | phorm answered, but the answer could not be used. | a body that is not the requested representation, an unexpected status code |
+
+This matters for a caller that has to decide between deferring a document and rejecting it - a
+verification service that is merely down must not turn into a rejected document.
+
 ## Reaching the errors
 
 | Method | Returns |
@@ -68,8 +82,26 @@ This library therefore distinguishes the two cases:
 | `POST /api/dd_and_validate` | `determineAndValidate (...)`, `determineAndValidateAsXML (...)`, `determineAndValidateAsHtml (...)` |
 | `POST /api/hybrid_validate` | `hybridValidate (...)`, `hybridValidateAsXML (...)`, `hybridValidateAsHtml (...)` |
 
-Every payload taking method accepts a `byte []` or an `IReadableResource`. `validate` additionally
-accepts the VESID as a `String` besides the `DVRCoordinate`.
+The country of `hybrid_validate` can be given as the `EPhormHybridCountry` enum - `DE`, `FR` or
+`OTHER`, which is what phorm knows today - or as a plain `String`. Use the `String` variant when the
+code comes from the processed data rather than from a decision in the code: a country that phorm
+learns about after this release is then passed on without a new version of this library, and phorm
+falls back to its default for anything it does not know.
+
+Every method that returns a typed result accepts the payload as a `byte []` or as an
+`IHasInputStream`. The latter is **streamed** to phorm, so a large document is never held in memory
+as a whole - `IReadableResource` is an `IHasInputStream`, and `HasInputStream.multiple (...)` builds
+one from any `InputStream` supplier:
+
+```java
+aClient.determineAndValidate (HasInputStream.multiple ( () -> aStore.openForRead (sPath)));
+```
+
+A payload that can be read more than once yields a repeatable HTTP entity, so the client may replay
+the request; a read-once payload is sent as a plain stream. The `...AsXML` and `...AsHtml` variants
+take a `byte []` only.
+
+`validate` additionally accepts the VESID as a `String` besides the `DVRCoordinate`.
 
 Internally JSON is always requested, because it is the most compact of the three representations
 phorm offers and the only one convertible into the phive and ddd models. The `...AsXML` and
@@ -119,3 +151,10 @@ v1.0.0 - work in progress
 * Returns the regular phive `ValidationResultList` and ddd `DocumentDetails` object models
 * Treats a content wise invalid document as a regular result instead of an error, so the findings of
   an HTTP 400 answer are not lost
+* Payloads may be passed as `IHasInputStream` and are then streamed, so a large document is never
+  held in memory as a whole. This replaces the previous `IReadableResource` overloads, which
+  materialized the payload
+* The hybrid PDF country may be passed as a plain `String` besides `EPhormHybridCountry`, so a
+  country added to the phorm side rules later needs no new version of this library
+* `PhormClientException` carries an `EPhormErrorType` that tells a faulty request, an unavailable
+  service and an unusable answer apart
