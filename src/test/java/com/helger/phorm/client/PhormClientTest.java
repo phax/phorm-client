@@ -154,7 +154,7 @@ public final class PhormClientTest
   public void testStreamingEntityReadMultiple () throws Exception
   {
     final byte [] aPayload = "<Invoice/>".getBytes (StandardCharsets.UTF_8);
-    final HttpEntity aEntity = PhormClient.createStreamingEntity (HasInputStream.multiple ( () -> new NonBlockingByteArrayInputStream (aPayload)),
+    final HttpEntity aEntity = PhormClient.createStreamingEntity (HasInputStream.multiple (() -> new NonBlockingByteArrayInputStream (aPayload)),
                                                                   CMimeType.APPLICATION_XML);
     // Repeatable, so that the HTTP client may replay the request
     assertTrue (aEntity.isRepeatable ());
@@ -175,7 +175,7 @@ public final class PhormClientTest
   public void testStreamingEntityReadOnce () throws Exception
   {
     final byte [] aPayload = "%PDF-1.7".getBytes (StandardCharsets.UTF_8);
-    final HttpEntity aEntity = PhormClient.createStreamingEntity (HasInputStream.once ( () -> new NonBlockingByteArrayInputStream (aPayload)),
+    final HttpEntity aEntity = PhormClient.createStreamingEntity (HasInputStream.once (() -> new NonBlockingByteArrayInputStream (aPayload)),
                                                                   CMimeType.APPLICATION_PDF);
     assertFalse (aEntity.isRepeatable ());
     assertEquals (-1, aEntity.getContentLength ());
@@ -192,7 +192,7 @@ public final class PhormClientTest
   {
     try
     {
-      PhormClient.createStreamingEntity (HasInputStream.once ( () -> null), CMimeType.APPLICATION_XML);
+      PhormClient.createStreamingEntity (HasInputStream.once (() -> null), CMimeType.APPLICATION_XML);
       fail ("Expected a PhormClientException");
     }
     catch (final PhormClientException ex)

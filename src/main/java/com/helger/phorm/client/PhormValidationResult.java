@@ -168,8 +168,7 @@ public class PhormValidationResult
   @NonNull
   public EExtendedValidity getOverallValidity ()
   {
-    return m_aValidationResultList == null ? EExtendedValidity.UNCLEAR : m_aValidationResultList
-                                                                                               .getOverallValidity ();
+    return m_aValidationResultList == null ? EExtendedValidity.UNCLEAR : m_aValidationResultList.getOverallValidity ();
   }
 
   /**
@@ -185,8 +184,8 @@ public class PhormValidationResult
   }
 
   /**
-   * @return All findings of error level <code>WARN</code> and above, flattened across all validation
-   *         layers. Never <code>null</code> but maybe empty. This is the superset of
+   * @return All findings of error level <code>WARN</code> and above, flattened across all
+   *         validation layers. Never <code>null</code> but maybe empty. This is the superset of
    *         {@link #getAllErrors()}.
    */
   @NonNull
@@ -270,7 +269,7 @@ public class PhormValidationResult
 
     // Only the determining APIs deliver document details
     final DocumentDetails aDD = DocumentDetailsJsonHelper.getAsDocumentDetails (aJson.getAsObject (CPhormClient.JSON_DOCUMENT_DETAILS),
-                                                                               aIdentifierFactory);
+                                                                                aIdentifierFactory);
     // Only the hybrid API reports a country
     final EPhormHybridCountry eCountry = EPhormHybridCountry.getFromIDOrNull (aJson.getAsString (CPhormClient.JSON_COUNTRY));
 

@@ -378,7 +378,9 @@ public class PhormClient implements AutoCloseable
 
     if (aResponse.getStatusCode () == CHttp.HTTP_FORBIDDEN)
       throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
-                                      "phorm rejected the value of the '" + CPhormClient.HEADER_X_TOKEN + "' HTTP header",
+                                      "phorm rejected the value of the '" +
+                                                                     CPhormClient.HEADER_X_TOKEN +
+                                                                     "' HTTP header",
                                       aResponse);
 
     final String sBody = aResponse.getBodyAsString ();
@@ -618,8 +620,7 @@ public class PhormClient implements AutoCloseable
   {
     final DVRCoordinate aVESID = DVRCoordinate.parseOrNull (sVESID);
     if (aVESID == null)
-      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
-                                      "The VESID '" + sVESID + "' could not be parsed");
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR, "The VESID '" + sVESID + "' could not be parsed");
     return validate (aVESID, aPayload);
   }
 
@@ -810,9 +811,7 @@ public class PhormClient implements AutoCloseable
   @NonNull
   public IMicroDocument determineAndValidateAsXML (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    return _postAsXML (CPhormClient.PATH_DD_AND_VALIDATE,
-                       null,
-                       _createEntity (aPayload, CMimeType.APPLICATION_XML));
+    return _postAsXML (CPhormClient.PATH_DD_AND_VALIDATE, null, _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -828,9 +827,7 @@ public class PhormClient implements AutoCloseable
   @NonNull
   public String determineAndValidateAsHtml (final byte @NonNull [] aPayload) throws PhormClientException
   {
-    return _postAsHtml (CPhormClient.PATH_DD_AND_VALIDATE,
-                        null,
-                        _createEntity (aPayload, CMimeType.APPLICATION_XML));
+    return _postAsHtml (CPhormClient.PATH_DD_AND_VALIDATE, null, _createEntity (aPayload, CMimeType.APPLICATION_XML));
   }
 
   /**
@@ -874,11 +871,11 @@ public class PhormClient implements AutoCloseable
   }
 
   /**
-   * Validate a ZUGFeRD / Factur-X hybrid PDF invoice against the rules of an arbitrary country.
-   * Use this instead of {@link #hybridValidate(byte[], EPhormHybridCountry)} if the country code
-   * comes from the processed data rather than from a decision in the code - a country that phorm
-   * learns about after this library was released is then passed on without a change in here. phorm
-   * falls back to its default for a country it does not know.
+   * Validate a ZUGFeRD / Factur-X hybrid PDF invoice against the rules of an arbitrary country. Use
+   * this instead of {@link #hybridValidate(byte[], EPhormHybridCountry)} if the country code comes
+   * from the processed data rather than from a decision in the code - a country that phorm learns
+   * about after this library was released is then passed on without a change in here. phorm falls
+   * back to its default for a country it does not know.
    *
    * @param aPayload
    *        The PDF document to be validated. May not be <code>null</code>.
@@ -946,8 +943,8 @@ public class PhormClient implements AutoCloseable
    *        held in memory as a whole. May not be <code>null</code>.
    * @param sCountryID
    *        The ID of the country whose specific rules shall be applied. May be <code>null</code> or
-   *        empty to use the phorm side default. See
-   *        {@link #hybridValidate(byte[], String)} for why this exists.
+   *        empty to use the phorm side default. See {@link #hybridValidate(byte[], String)} for why
+   *        this exists.
    * @return The validation result.
    * @throws PhormClientException
    *         If the payload cannot be opened, if the country code is not a plain code, or on any of

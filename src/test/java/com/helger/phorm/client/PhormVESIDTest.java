@@ -57,7 +57,7 @@ public final class PhormVESIDTest
   {
     // "latest" is only present if it is true
     final PhormVESID aVESID = PhormVESID.createFromJson (new JsonObject ().add (CPhormClient.JSON_VESID,
-                                                                               "eu.peppol.bis3:invoice:1.0")
+                                                                                "eu.peppol.bis3:invoice:1.0")
                                                                           .add (CPhormClient.JSON_DEPRECATED, true));
     assertNotNull (aVESID);
     assertTrue (aVESID.isDeprecated ());
