@@ -66,8 +66,8 @@ import com.helger.peppolid.factory.SimpleIdentifierFactory;
 import com.helger.xml.microdom.IMicroDocument;
 
 /**
- * Client for the phorm REST API. It covers the liveness and readiness APIs, the version API and
- * all five validation APIs phorm offers:
+ * Client for the phorm REST API. It covers the liveness and readiness APIs, the version API and all
+ * five validation APIs phorm offers:
  * <ul>
  * <li><code>GET /ping</code> - {@link #isAlive()}</li>
  * <li><code>GET /ready</code> - {@link #isReady()}</li>
@@ -231,9 +231,9 @@ public class PhormClient implements AutoCloseable
    *        The value of the <code>X-Token</code> HTTP header for the validation APIs. May be
    *        <code>null</code>.
    * @param sAdminToken
-   *        The value of the <code>X-Token</code> HTTP header for the admin APIs, matching the server
-   *        side <code>phorm.api.admin.token</code>. May be <code>null</code> if the admin APIs are
-   *        not used.
+   *        The value of the <code>X-Token</code> HTTP header for the admin APIs, matching the
+   *        server side <code>phorm.api.admin.token</code>. May be <code>null</code> if the admin
+   *        APIs are not used.
    * @param aIdentifierFactory
    *        The identifier factory used to parse the participant, document type and process
    *        identifiers of the determined document details. May not be <code>null</code>.
@@ -726,7 +726,7 @@ public class PhormClient implements AutoCloseable
     _checkForError (aResponse, null);
 
     final String sBody = aResponse.getBodyAsString ();
-    if (!aResponse.hasMimeType (EPhormResponseFormat.TEXT.getMimeType ()) || StringHelper.isEmptyAfterTrim (sBody))
+    if (!aResponse.hasMimeType (EPhormResponseFormat.TEXT.getMimeType ()) || StringHelper.isBlank (sBody))
       throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
                                       "The phorm response carries no plain text version",
                                       aResponse);
@@ -762,8 +762,8 @@ public class PhormClient implements AutoCloseable
    * phorm answers HTTP 200 with <code>{"ready":true}</code> once all validation rules are loaded,
    * and HTTP 503 with <code>{"ready":false}</code> before that.
    *
-   * @return <code>true</code> if phorm is ready, <code>false</code> if it is not (yet) - that is any
-   *         HTTP 503.
+   * @return <code>true</code> if phorm is ready, <code>false</code> if it is not (yet) - that is
+   *         any HTTP 503.
    * @throws PhormClientException
    *         On a transport problem (phorm not reachable at all), on an unexpected response, or if
    *         the phorm instance does not offer the readiness API (phorm older than 2.2.18).
