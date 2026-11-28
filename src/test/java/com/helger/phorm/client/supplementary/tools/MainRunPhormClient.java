@@ -36,7 +36,7 @@ public final class MainRunPhormClient
 {
   private static final Logger LOGGER = LoggerFactory.getLogger (MainRunPhormClient.class);
 
-  private static final String BASE_URL = "http://localhost:8080";
+  private static final String BASE_URL = "http://localhost:8090";
   private static final String API_TOKEN = "phorm-dev-token";
   private static final String INPUT_XML_FILE = "src/test/resources/external/example.xml";
 

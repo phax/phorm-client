@@ -40,9 +40,10 @@ public class PhormVESID
   private final String m_sName;
   private final boolean m_bDeprecated;
   private final boolean m_bLatest;
+  private final String m_sRepositoryID;
 
   /**
-   * Constructor
+   * Constructor for a built-in rule set.
    *
    * @param aVESID
    *        The validation executor set coordinate. May not be <code>null</code>.
@@ -58,11 +59,37 @@ public class PhormVESID
                      final boolean bDeprecated,
                      final boolean bLatest)
   {
+    this (aVESID, sName, bDeprecated, bLatest, null);
+  }
+
+  /**
+   * Constructor
+   *
+   * @param aVESID
+   *        The validation executor set coordinate. May not be <code>null</code>.
+   * @param sName
+   *        The human readable name. May be <code>null</code>.
+   * @param bDeprecated
+   *        <code>true</code> if the rule set is deprecated.
+   * @param bLatest
+   *        <code>true</code> if this is the latest version of the rule set.
+   * @param sRepositoryID
+   *        The ID of the external repository the rule set was loaded from. May be
+   *        <code>null</code> for a built-in rule set.
+   * @since 1.1.0
+   */
+  public PhormVESID (@NonNull final DVRCoordinate aVESID,
+                     @Nullable final String sName,
+                     final boolean bDeprecated,
+                     final boolean bLatest,
+                     @Nullable final String sRepositoryID)
+  {
     ValueEnforcer.notNull (aVESID, "VESID");
     m_aVESID = aVESID;
     m_sName = sName;
     m_bDeprecated = bDeprecated;
     m_bLatest = bLatest;
+    m_sRepositoryID = sRepositoryID;
   }
 
   /**
@@ -100,6 +127,29 @@ public class PhormVESID
     return m_bLatest;
   }
 
+  /**
+   * @return The ID of the external repository the rule set was loaded from. May be
+   *         <code>null</code>, which means the rule set is built into phorm.
+   * @see #isBuiltIn()
+   * @since 1.1.0
+   */
+  @Nullable
+  public String getRepositoryID ()
+  {
+    return m_sRepositoryID;
+  }
+
+  /**
+   * @return <code>true</code> if the rule set is built into phorm, <code>false</code> if it was
+   *         loaded from an external repository.
+   * @see #getRepositoryID()
+   * @since 1.1.0
+   */
+  public boolean isBuiltIn ()
+  {
+    return m_sRepositoryID == null;
+  }
+
   @Override
   public boolean equals (final Object o)
   {
@@ -111,7 +161,8 @@ public class PhormVESID
     return m_aVESID.equals (rhs.m_aVESID) &&
            EqualsHelper.equals (m_sName, rhs.m_sName) &&
            m_bDeprecated == rhs.m_bDeprecated &&
-           m_bLatest == rhs.m_bLatest;
+           m_bLatest == rhs.m_bLatest &&
+           EqualsHelper.equals (m_sRepositoryID, rhs.m_sRepositoryID);
   }
 
   @Override
@@ -121,6 +172,7 @@ public class PhormVESID
                                        .append (m_sName)
                                        .append (m_bDeprecated)
                                        .append (m_bLatest)
+                                       .append (m_sRepositoryID)
                                        .getHashCode ();
   }
 
@@ -131,6 +183,7 @@ public class PhormVESID
                                        .appendIfNotNull ("Name", m_sName)
                                        .append ("Deprecated", m_bDeprecated)
                                        .append ("Latest", m_bLatest)
+                                       .appendIfNotNull ("RepositoryID", m_sRepositoryID)
                                        .getToString ();
   }
 
@@ -154,6 +207,7 @@ public class PhormVESID
     return new PhormVESID (aVESID,
                            aObj.getAsString (CPhormClient.JSON_NAME),
                            aObj.getAsBoolean (CPhormClient.JSON_DEPRECATED, false),
-                           aObj.getAsBoolean (CPhormClient.JSON_LATEST, false));
+                           aObj.getAsBoolean (CPhormClient.JSON_LATEST, false),
+                           aObj.getAsString (CPhormClient.JSON_REPOSITORY));
   }
 }

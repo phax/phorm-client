@@ -140,6 +140,37 @@ public final class PhormClientTest
   }
 
   @Test
+  public void testAdminWithoutAdminToken ()
+  {
+    // The regular token is never sent to the admin APIs
+    try (final PhormClient aClient = PhormClient.builder ().baseURL ("http://localhost:8080").token ("t").build ())
+    {
+      try
+      {
+        // Must fail before any HTTP connection is attempted
+        aClient.getAdminRepositories ();
+        fail ("Expected a PhormClientException");
+      }
+      catch (final PhormClientException ex)
+      {
+        assertEquals (EPhormErrorType.REQUEST_ERROR, ex.getErrorType ());
+        assertEquals (-1, ex.getStatusCode ());
+      }
+
+      try
+      {
+        aClient.reloadAdminRepositories ();
+        fail ("Expected a PhormClientException");
+      }
+      catch (final PhormClientException ex)
+      {
+        assertEquals (EPhormErrorType.REQUEST_ERROR, ex.getErrorType ());
+        assertEquals (-1, ex.getStatusCode ());
+      }
+    }
+  }
+
+  @Test
   public void testCountryQuery () throws Exception
   {
     assertNull (PhormClient.getCountryQuery (null));

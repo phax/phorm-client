@@ -10,7 +10,7 @@
 Java client library for the REST API of [phorm](https://github.com/phax/phorm), the standalone XML
 document validation service built on [phive](https://github.com/phax/phive).
 
-It covers all five phorm APIs, hands back the regular phive and
+It covers all five phorm validation APIs, the version API and the two admin APIs, hands back the regular phive and
 [ddd](https://github.com/phax/ddd) object models, and keeps the unparsed HTTP response reachable for
 everything the typed model does not cover.
 
@@ -83,11 +83,25 @@ verification service that is merely down must not turn into a rejected document.
 
 | phorm API | Method |
 |---|---|
+| `GET /api/get/version` | `getServerVersion ()`, `getServerVersionAsText ()` |
 | `GET /api/get/vesids` | `getAllVESIDs ()` / `getAllVESIDs (boolean)` |
 | `POST /api/validate/{vesid}` | `validate (...)`, `validateAsXML (...)`, `validateAsHtml (...)` |
 | `POST /api/determinedoctype` | `determineDocumentDetails (...)`, `determineDocumentDetailsAsXML (...)` |
 | `POST /api/dd_and_validate` | `determineAndValidate (...)`, `determineAndValidateAsXML (...)`, `determineAndValidateAsHtml (...)` |
 | `POST /api/hybrid_validate` | `hybridValidate (...)`, `hybridValidateAsXML (...)`, `hybridValidateAsHtml (...)` |
+| `GET /api/admin/repositories` | `getAdminRepositories ()` |
+| `POST /api/admin/repositories/reload` | `reloadAdminRepositories ()` |
+
+`getServerVersion ()` returns the major and minor version of phorm, so a caller can check for a
+feature before using it - `isAtLeast (2, 3)` for the admin APIs, for example. phorm does not disclose
+the micro version. `getServerVersionAsText ()` requests the
+`text/plain` representation and returns it as is, e.g. `2.3`. A phorm without this API answers HTTP
+404, and both methods then return `null`.
+The API exists from phorm 2.2.18 on ([phorm #25](https://github.com/phax/phorm/issues/25)).
+Feature checks therefore only work against phorm 2.2.18 or later; `null` means older than that.
+
+Each `PhormVESID` returned by `getAllVESIDs` carries `getRepositoryID ()`: the ID of the external
+repository the rule set was loaded from, or `null` for a rule set built into phorm (`isBuiltIn ()`).
 
 The country of `hybrid_validate` can be given as the `EPhormHybridCountry` enum - `DE`, `FR` or
 `OTHER`, which is what phorm knows today - or as a plain `String`. Use the `String` variant when the
@@ -118,6 +132,33 @@ representation instead; they return an `IMicroDocument` and a `String` respectiv
 `determineDocumentDetails` returns `null` when phorm cannot determine the document type - it answers
 that case with HTTP 204.
 
+## Admin APIs
+
+The admin APIs check the `X-Token` header against the server side `phorm.api.admin.token`, not
+against `phorm.api.requiredtoken`. Set it with `adminToken (...)` on the builder; it is sent to the
+admin APIs only. Without it, an admin call fails with a `REQUEST_ERROR` before anything is sent.
+phorm only enables the admin APIs if `phorm.api.admin.token` is set, and answers HTTP 404 otherwise,
+which is also reported as a `REQUEST_ERROR`.
+
+```java
+try (final PhormClient aClient = PhormClient.builder ()
+                                            .baseURL ("http://localhost:8080")
+                                            .adminToken ("phorm-admin-token")
+                                            .build ())
+{
+  final PhormRepositoryReloadResult aResult = aClient.reloadAdminRepositories ();
+  if (aResult.isSuccess ())
+    System.out.println ("Added " + aResult.getAllAddedVESIDs () + ", removed " + aResult.getAllRemovedVESIDs ());
+  else
+    for (final IError aError : aResult.getErrors ())
+      System.out.println (aError.getAsString (Locale.US));
+}
+```
+
+A failed reload is a regular result, just like an invalid document: phorm answers it with HTTP 500
+and keeps the previously loaded rule sets active, `isSuccess ()` is `false` and `getErrors ()` holds
+the problems. `getErrors ()` may also contain warnings after a successful reload.
+
 # Configuration
 
 Everything but the base URL has a default:
@@ -126,6 +167,7 @@ Everything but the base URL has a default:
 PhormClient.builder ()
            .baseURL ("https://phorm.example.org")   // mandatory
            .token ("...")                           // the X-Token header value
+           .adminToken ("...")                      // the X-Token header value of the admin APIs
            .apiPath ("/api")                        // default
            .identifierFactory (SimpleIdentifierFactory.INSTANCE) // default
            .httpClientSettings (aHCS)               // timeouts, proxy, TLS
@@ -151,6 +193,19 @@ Add the following to your `pom.xml` to use this artifact, replacing `x.y.z` with
 ```
 
 # News and noteworthy
+
+v1.1.0 - work in progress
+* Added the admin APIs `GET /api/admin/repositories` (`getAdminRepositories ()`) and
+  `POST /api/admin/repositories/reload` (`reloadAdminRepositories ()`), using the new builder
+  property `adminToken`
+* A failed repository reload is a regular `PhormRepositoryReloadResult` with the problems in
+  `getErrors ()`, not an exception
+* Added `getServerVersion ()` for the `GET /api/get/version` API of phorm 2.2.18 and later
+  ([phorm #25](https://github.com/phax/phorm/issues/25)), returning the major and minor version as
+  `PhormServerVersion`, or `null` for a phorm without this API. `getServerVersionAsText ()` returns
+  the `text/plain` representation, e.g. `2.3`
+* Added `PhormVESID.getRepositoryID ()` and `isBuiltIn ()`, filled from the `repository` field of
+  `/api/get/vesids`
 
 v1.0.0 - 2026-09-28
 * Initial release

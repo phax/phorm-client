@@ -27,8 +27,8 @@ import com.helger.mime.IMimeType;
 
 /**
  * The representation in which phorm should deliver a response. It is selected via the HTTP
- * <code>Accept</code> header. JSON is the default, because it is the most compact of the three and
- * the only one this library can convert into a typed result.
+ * <code>Accept</code> header. JSON is the default, because it is the most compact of the
+ * structured representations and the only one this library can convert into a typed result.
  *
  * @author Philip Helger
  */
@@ -39,7 +39,13 @@ public enum EPhormResponseFormat implements IHasID <String>
   /** XML */
   XML ("xml", CMimeType.APPLICATION_XML),
   /** A ready to render HTML report */
-  HTML ("html", CMimeType.TEXT_HTML);
+  HTML ("html", CMimeType.TEXT_HTML),
+  /**
+   * Plain text - only offered by the version API
+   *
+   * @since 1.1.0
+   */
+  TEXT ("text", CMimeType.TEXT_PLAIN);
 
   private final String m_sID;
   private final IMimeType m_aMimeType;

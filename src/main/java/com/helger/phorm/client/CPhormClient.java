@@ -36,12 +36,18 @@ public final class CPhormClient
   public static final String PATH_VALIDATE = "/validate/";
   /** Path of the "get all VESIDs" API */
   public static final String PATH_GET_VESIDS = "/get/vesids";
+  /** Path of the "get the major and minor version" API */
+  public static final String PATH_GET_VERSION = "/get/version";
   /** Path of the "determine document type" API */
   public static final String PATH_DETERMINE_DOCTYPE = "/determinedoctype";
   /** Path of the "determine document type and validate" API */
   public static final String PATH_DD_AND_VALIDATE = "/dd_and_validate";
   /** Path of the "validate a hybrid PDF" API */
   public static final String PATH_HYBRID_VALIDATE = "/hybrid_validate";
+  /** Path of the admin "get the external repositories" API */
+  public static final String PATH_ADMIN_REPOSITORIES = "/admin/repositories";
+  /** Path of the admin "reload the external repositories" API */
+  public static final String PATH_ADMIN_REPOSITORIES_RELOAD = "/admin/repositories/reload";
 
   /** URL parameter of {@link #PATH_GET_VESIDS} to also return deprecated VESIDs */
   public static final String QUERY_PARAM_INCLUDE_DEPRECATED = "include-deprecated";
@@ -69,6 +75,33 @@ public final class CPhormClient
   public static final String JSON_DEPRECATED = "deprecated";
   /** JSON field of a single VESID entry indicating it is the latest version */
   public static final String JSON_LATEST = "latest";
+  /**
+   * JSON field of a single VESID entry holding the ID of the external repository it was loaded
+   * from. Absent for a built-in VESID.
+   */
+  public static final String JSON_REPOSITORY = "repository";
+
+  /** JSON field of the version API with the major version */
+  public static final String JSON_MAJOR = "major";
+  /** JSON field of the version API with the minor version */
+  public static final String JSON_MINOR = "minor";
+
+  /** JSON field of the admin APIs with the absolute path of the repository configuration file */
+  public static final String JSON_CONFIG_FILE = "configFile";
+  /** JSON field of the admin APIs with the date and time of the last successful load */
+  public static final String JSON_LOAD_DATETIME = "loadDateTime";
+  /** JSON field of the admin APIs with the array of external repositories */
+  public static final String JSON_REPOSITORIES = "repositories";
+  /** JSON field of a single repository entry holding its ID */
+  public static final String JSON_ID = "id";
+  /** JSON field of a single repository entry holding the number of VES loaded from it */
+  public static final String JSON_VES_COUNT = "vesCount";
+  /** JSON field of the reload API with the array of VESIDs that were added */
+  public static final String JSON_ADDED = "added";
+  /** JSON field of the reload API with the array of VESIDs that were removed */
+  public static final String JSON_REMOVED = "removed";
+  /** JSON field of the reload API with the array of problems that occurred */
+  public static final String JSON_ERRORS = "errors";
 
   private CPhormClient ()
   {}

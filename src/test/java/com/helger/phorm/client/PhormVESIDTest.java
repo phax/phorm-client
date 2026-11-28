@@ -18,6 +18,7 @@ package com.helger.phorm.client;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -47,6 +48,8 @@ public final class PhormVESIDTest
     assertEquals ("Peppol BIS Billing UBL Invoice V3", aVESID.getName ());
     assertFalse (aVESID.isDeprecated ());
     assertTrue (aVESID.isLatest ());
+    assertNull (aVESID.getRepositoryID ());
+    assertTrue (aVESID.isBuiltIn ());
     assertEquals (aVESID, PhormVESID.createFromJson (aObj));
     assertEquals (aVESID.hashCode (), PhormVESID.createFromJson (aObj).hashCode ());
     assertNotNull (aVESID.toString ());
@@ -63,6 +66,26 @@ public final class PhormVESIDTest
     assertTrue (aVESID.isDeprecated ());
     assertFalse (aVESID.isLatest ());
     assertNull (aVESID.getName ());
+  }
+
+  @Test
+  public void testCreateFromJsonWithRepository ()
+  {
+    // "repository" is only present for VES loaded from an external repository
+    final IJsonObject aObj = new JsonObject ().add (CPhormClient.JSON_VESID, "com.example:invoice:1.0")
+                                              .add (CPhormClient.JSON_DEPRECATED, false)
+                                              .add (CPhormClient.JSON_NAME, "Example invoice")
+                                              .add (CPhormClient.JSON_REPOSITORY, "example-repo");
+    final PhormVESID aVESID = PhormVESID.createFromJson (aObj);
+    assertNotNull (aVESID);
+    assertEquals ("example-repo", aVESID.getRepositoryID ());
+    assertFalse (aVESID.isBuiltIn ());
+
+    // The repository is part of the identity
+    final PhormVESID aBuiltIn = new PhormVESID (aVESID.getVESID (), "Example invoice", false, false);
+    assertTrue (aBuiltIn.isBuiltIn ());
+    assertNotEquals (aVESID, aBuiltIn);
+    assertEquals (aVESID, new PhormVESID (aVESID.getVESID (), "Example invoice", false, false, "example-repo"));
   }
 
   @Test

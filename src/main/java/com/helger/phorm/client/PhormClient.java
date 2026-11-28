@@ -65,14 +65,23 @@ import com.helger.peppolid.factory.SimpleIdentifierFactory;
 import com.helger.xml.microdom.IMicroDocument;
 
 /**
- * Client for the phorm REST API. It covers all five APIs phorm offers:
+ * Client for the phorm REST API. It covers the version API and all five validation APIs phorm
+ * offers:
  * <ul>
+ * <li><code>GET /api/get/version</code> - {@link #getServerVersion()},
+ * {@link #getServerVersionAsText()}</li>
  * <li><code>GET /api/get/vesids</code> - {@link #getAllVESIDs(boolean)}</li>
  * <li><code>POST /api/validate/{vesid}</code> - {@link #validate(DVRCoordinate, byte[])}</li>
  * <li><code>POST /api/determinedoctype</code> - {@link #determineDocumentDetails(byte[])}</li>
  * <li><code>POST /api/dd_and_validate</code> - {@link #determineAndValidate(byte[])}</li>
  * <li><code>POST /api/hybrid_validate</code> -
  * {@link #hybridValidate(byte[], EPhormHybridCountry)}</li>
+ * </ul>
+ * and the two admin APIs, which require the separate admin token - see
+ * {@link Builder#adminToken(String)}:
+ * <ul>
+ * <li><code>GET /api/admin/repositories</code> - {@link #getAdminRepositories()}</li>
+ * <li><code>POST /api/admin/repositories/reload</code> - {@link #reloadAdminRepositories()}</li>
  * </ul>
  * <p>
  * Internally JSON is always requested, because it is the most compact of the three representations
@@ -116,6 +125,7 @@ public class PhormClient implements AutoCloseable
   private final String m_sBaseURL;
   private final String m_sAPIPath;
   private final String m_sToken;
+  private final String m_sAdminToken;
   private final IIdentifierFactory m_aIdentifierFactory;
   private final HttpClientManager m_aHCM;
   private final boolean m_bOwnsHCM;
@@ -173,11 +183,11 @@ public class PhormClient implements AutoCloseable
    */
   public PhormClient (@NonNull @Nonempty final String sBaseURL, @Nullable final String sToken)
   {
-    this (sBaseURL, CPhormClient.DEFAULT_API_PATH, sToken, SimpleIdentifierFactory.INSTANCE, null, null);
+    this (sBaseURL, CPhormClient.DEFAULT_API_PATH, sToken, null, SimpleIdentifierFactory.INSTANCE, null, null);
   }
 
   /**
-   * Full constructor. Prefer {@link #builder()}.
+   * Constructor without an admin token. Prefer {@link #builder()}.
    *
    * @param sBaseURL
    *        The base URL of the phorm instance. May neither be <code>null</code> nor empty.
@@ -203,6 +213,43 @@ public class PhormClient implements AutoCloseable
                          @Nullable final HttpClientSettings aHttpClientSettings,
                          @Nullable final HttpClientManager aHttpClientManager)
   {
+    this (sBaseURL, sAPIPath, sToken, null, aIdentifierFactory, aHttpClientSettings, aHttpClientManager);
+  }
+
+  /**
+   * Full constructor. Prefer {@link #builder()}.
+   *
+   * @param sBaseURL
+   *        The base URL of the phorm instance. May neither be <code>null</code> nor empty.
+   * @param sAPIPath
+   *        The path below which the APIs reside, usually {@link CPhormClient#DEFAULT_API_PATH}. May
+   *        neither be <code>null</code> nor empty.
+   * @param sToken
+   *        The value of the <code>X-Token</code> HTTP header for the validation APIs. May be
+   *        <code>null</code>.
+   * @param sAdminToken
+   *        The value of the <code>X-Token</code> HTTP header for the admin APIs, matching the server
+   *        side <code>phorm.api.admin.token</code>. May be <code>null</code> if the admin APIs are
+   *        not used.
+   * @param aIdentifierFactory
+   *        The identifier factory used to parse the participant, document type and process
+   *        identifiers of the determined document details. May not be <code>null</code>.
+   * @param aHttpClientSettings
+   *        The HTTP settings to create an own connection pool from. Ignored if
+   *        <code>aHttpClientManager</code> is provided. May be <code>null</code>.
+   * @param aHttpClientManager
+   *        An externally managed connection pool. If provided, it is <b>not</b> closed by
+   *        {@link #close()}. May be <code>null</code>.
+   * @since 1.1.0
+   */
+  protected PhormClient (@NonNull @Nonempty final String sBaseURL,
+                         @NonNull @Nonempty final String sAPIPath,
+                         @Nullable final String sToken,
+                         @Nullable final String sAdminToken,
+                         @NonNull final IIdentifierFactory aIdentifierFactory,
+                         @Nullable final HttpClientSettings aHttpClientSettings,
+                         @Nullable final HttpClientManager aHttpClientManager)
+  {
     ValueEnforcer.notEmpty (sBaseURL, "BaseURL");
     ValueEnforcer.notEmpty (sAPIPath, "APIPath");
     ValueEnforcer.notNull (aIdentifierFactory, "IdentifierFactory");
@@ -210,6 +257,7 @@ public class PhormClient implements AutoCloseable
     m_sBaseURL = StringHelper.trimEnd (sBaseURL, "/");
     m_sAPIPath = sAPIPath;
     m_sToken = sToken;
+    m_sAdminToken = sAdminToken;
     m_aIdentifierFactory = aIdentifierFactory;
     if (aHttpClientManager != null)
     {
@@ -235,11 +283,12 @@ public class PhormClient implements AutoCloseable
 
   @NonNull
   private PhormRawResponse _execute (@NonNull final HttpUriRequest aRequest,
-                                     @NonNull final EPhormResponseFormat eFormat) throws PhormClientException
+                                     @NonNull final EPhormResponseFormat eFormat,
+                                     @Nullable final String sToken) throws PhormClientException
   {
     aRequest.addHeader (CHttpHeader.ACCEPT, eFormat.getMimeType ().getAsString ());
-    if (StringHelper.isNotEmpty (m_sToken))
-      aRequest.addHeader (CPhormClient.HEADER_X_TOKEN, m_sToken);
+    if (StringHelper.isNotEmpty (sToken))
+      aRequest.addHeader (CPhormClient.HEADER_X_TOKEN, sToken);
 
     try
     {
@@ -261,7 +310,7 @@ public class PhormClient implements AutoCloseable
     final String sURL = _buildURL (sPath, sQuery);
     if (LOGGER.isDebugEnabled ())
       LOGGER.debug ("Invoking phorm API 'GET " + sURL + "'");
-    return _execute (new HttpGet (sURL), eFormat);
+    return _execute (new HttpGet (sURL), eFormat, m_sToken);
   }
 
   @NonNull
@@ -282,7 +331,7 @@ public class PhormClient implements AutoCloseable
 
     final HttpPost aPost = new HttpPost (sURL);
     aPost.setEntity (aEntity);
-    return _execute (aPost, eFormat);
+    return _execute (aPost, eFormat, m_sToken);
   }
 
   /**
@@ -461,6 +510,48 @@ public class PhormClient implements AutoCloseable
   }
 
   /**
+   * Invoke an admin API with the admin token. The admin APIs check the <code>X-Token</code> HTTP
+   * header against <code>phorm.api.admin.token</code> instead of
+   * <code>phorm.api.requiredtoken</code>, and phorm rejects every admin request if no admin token
+   * is configured on its side - so a call without an admin token is refused before anything is
+   * sent.
+   *
+   * @param aRequest
+   *        The request to be executed. May not be <code>null</code>.
+   * @return The raw response. Never <code>null</code>.
+   * @throws PhormClientException
+   *         If no admin token is configured, or on a transport problem.
+   */
+  @NonNull
+  private PhormRawResponse _executeAdmin (@NonNull final HttpUriRequest aRequest) throws PhormClientException
+  {
+    if (StringHelper.isEmpty (m_sAdminToken))
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
+                                      "The phorm admin APIs require an admin token, but none is configured");
+
+    if (LOGGER.isDebugEnabled ())
+      LOGGER.debug ("Invoking phorm admin API '" + aRequest.getMethod () + " " + aRequest.getRequestUri () + "'");
+    return _execute (aRequest, EPhormResponseFormat.JSON, m_sAdminToken);
+  }
+
+  /**
+   * phorm registers the admin APIs only if <code>phorm.api.admin.token</code> is configured, so an
+   * HTTP 404 means they are switched off rather than that something unexpected happened.
+   *
+   * @param aResponse
+   *        The response to check. May not be <code>null</code>.
+   * @throws PhormClientException
+   *         If the response is an HTTP 404.
+   */
+  private static void _checkForAdminNotFound (@NonNull final PhormRawResponse aResponse) throws PhormClientException
+  {
+    if (aResponse.getStatusCode () == CHttp.HTTP_NOT_FOUND)
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR,
+                                      "The phorm admin APIs are not available - they are only enabled if 'phorm.api.admin.token' is configured",
+                                      aResponse);
+  }
+
+  /**
    * Build the <code>country</code> query parameter of the hybrid validation API. The value is
    * deliberately <b>not</b> checked against {@link EPhormHybridCountry}: a country that phorm
    * learns about after this library was released must be passable without a change in here, and
@@ -530,6 +621,60 @@ public class PhormClient implements AutoCloseable
   {
     if (m_bOwnsHCM)
       StreamHelper.close (m_aHCM);
+  }
+
+  /**
+   * Get the major and minor version of the target phorm instance, e.g. to check whether a feature
+   * is available before using it. Calls <code>GET /api/get/version</code>.
+   *
+   * @return The version, or <code>null</code> if the phorm instance predates this API - it then
+   *         answers HTTP 404.
+   * @throws PhormClientException
+   *         On a transport problem or an unexpected response.
+   * @since 1.1.0
+   */
+  @Nullable
+  public PhormServerVersion getServerVersion () throws PhormClientException
+  {
+    final PhormRawResponse aResponse = _get (CPhormClient.PATH_GET_VERSION, null, EPhormResponseFormat.JSON);
+    if (aResponse.getStatusCode () == CHttp.HTTP_NOT_FOUND)
+      return null;
+    _checkForError (aResponse, null);
+
+    final PhormServerVersion ret = PhormServerVersion.createFromJson (aResponse.getBodyAsJsonObjectOrThrow ());
+    if (ret == null)
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response carries no valid major and minor version",
+                                      aResponse);
+    return ret;
+  }
+
+  /**
+   * Get the major and minor version of the target phorm instance as plain text, e.g.
+   * <code>2.3</code>. Calls <code>GET /api/get/version</code> with <code>Accept: text/plain</code>.
+   * Prefer {@link #getServerVersion()} for comparisons.
+   *
+   * @return The version as <code>major.minor</code> without surrounding whitespace, or
+   *         <code>null</code> if the phorm instance predates this API - it then answers HTTP 404.
+   * @throws PhormClientException
+   *         On a transport problem or an unexpected response, including a response that is not
+   *         plain text.
+   * @since 1.1.0
+   */
+  @Nullable
+  public String getServerVersionAsText () throws PhormClientException
+  {
+    final PhormRawResponse aResponse = _get (CPhormClient.PATH_GET_VERSION, null, EPhormResponseFormat.TEXT);
+    if (aResponse.getStatusCode () == CHttp.HTTP_NOT_FOUND)
+      return null;
+    _checkForError (aResponse, null);
+
+    final String sBody = aResponse.getBodyAsString ();
+    if (!aResponse.hasMimeType (EPhormResponseFormat.TEXT.getMimeType ()) || StringHelper.isEmptyAfterTrim (sBody))
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response carries no plain text version",
+                                      aResponse);
+    return sBody.trim ();
   }
 
   /**
@@ -1082,6 +1227,60 @@ public class PhormClient implements AutoCloseable
   }
 
   /**
+   * Get the external repositories of the target phorm instance and the VES loaded from them. Calls
+   * <code>GET /api/admin/repositories</code> with the admin token.
+   *
+   * @return The repository status. Never <code>null</code>.
+   * @throws PhormClientException
+   *         If no admin token is configured, if phorm has the admin APIs disabled, on a rejected
+   *         admin token, on a transport problem or an unexpected response.
+   * @see Builder#adminToken(String)
+   * @since 1.1.0
+   */
+  @NonNull
+  public PhormRepositoryStatus getAdminRepositories () throws PhormClientException
+  {
+    final PhormRawResponse aResponse = _executeAdmin (new HttpGet (_buildURL (CPhormClient.PATH_ADMIN_REPOSITORIES,
+                                                                              null)));
+    _checkForAdminNotFound (aResponse);
+    _checkForError (aResponse, null);
+    return PhormRepositoryStatus.createFromResponse (aResponse);
+  }
+
+  /**
+   * Reload all external repositories of the target phorm instance from its configured repository
+   * configuration file. Calls <code>POST /api/admin/repositories/reload</code> with the admin
+   * token.
+   * <p>
+   * A failed reload is a regular result, not an exception: phorm then keeps the previously loaded
+   * VES active, answers with HTTP 500, and {@link PhormRepositoryReloadResult#isSuccess()} is
+   * <code>false</code> with the problems in {@link PhormRepositoryReloadResult#getErrors()}.
+   *
+   * @return The reload result. Never <code>null</code>.
+   * @throws PhormClientException
+   *         If no admin token is configured, if phorm has the admin APIs disabled, on a rejected
+   *         admin token, on a transport problem or an unexpected response.
+   * @see Builder#adminToken(String)
+   * @since 1.1.0
+   */
+  @NonNull
+  public PhormRepositoryReloadResult reloadAdminRepositories () throws PhormClientException
+  {
+    final PhormRawResponse aResponse = _executeAdmin (new HttpPost (_buildURL (CPhormClient.PATH_ADMIN_REPOSITORIES_RELOAD,
+                                                                               null)));
+    _checkForAdminNotFound (aResponse);
+
+    // A failed reload is answered with HTTP 500 and a regular result body. Anything else at HTTP
+    // 500 - e.g. an error page - is a broken service.
+    final boolean bIsFailedReload = aResponse.getStatusCode () == CHttp.HTTP_INTERNAL_SERVER_ERROR &&
+                                    aResponse.hasMimeType (EPhormResponseFormat.JSON.getMimeType ()) &&
+                                    aResponse.getBodyAsJsonObject () != null;
+    if (!bIsFailedReload)
+      _checkForError (aResponse, null);
+    return PhormRepositoryReloadResult.createFromResponse (aResponse);
+  }
+
+  /**
    * @return A new empty Builder. Never <code>null</code>.
    */
   @NonNull
@@ -1101,6 +1300,7 @@ public class PhormClient implements AutoCloseable
     private String m_sBaseURL;
     private String m_sAPIPath = CPhormClient.DEFAULT_API_PATH;
     private String m_sToken;
+    private String m_sAdminToken;
     private IIdentifierFactory m_aIdentifierFactory = SimpleIdentifierFactory.INSTANCE;
     private HttpClientSettings m_aHttpClientSettings;
     private HttpClientManager m_aHttpClientManager;
@@ -1148,6 +1348,22 @@ public class PhormClient implements AutoCloseable
     public Builder token (@Nullable final String s)
     {
       m_sToken = s;
+      return this;
+    }
+
+    /**
+     * @param s
+     *        The value of the <code>X-Token</code> HTTP header for the admin APIs, matching the
+     *        server side <code>phorm.api.admin.token</code>. It is a different value than
+     *        {@link #token(String)} and is sent to the admin APIs only. Omit it if the admin APIs
+     *        are not used - calling one of them then fails without contacting phorm.
+     * @return this for chaining
+     * @since 1.1.0
+     */
+    @NonNull
+    public Builder adminToken (@Nullable final String s)
+    {
+      m_sAdminToken = s;
       return this;
     }
 
@@ -1204,6 +1420,7 @@ public class PhormClient implements AutoCloseable
       return new PhormClient (m_sBaseURL,
                               m_sAPIPath,
                               m_sToken,
+                              m_sAdminToken,
                               m_aIdentifierFactory,
                               m_aHttpClientSettings,
                               m_aHttpClientManager);

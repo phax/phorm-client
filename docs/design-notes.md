@@ -26,6 +26,9 @@ and decides afterwards:
 | 400 with any other content type | `PhormClientException` carrying the body |
 | 403 | `PhormClientException` - the `X-Token` was missing or wrong |
 | 204 on `determinedoctype` | `null` - the type could not be determined |
+| 404 on `get/version` | `null` - phorm predates the version API |
+| 404 on an admin API | `PhormClientException` - the admin APIs are disabled on the server |
+| 500 with a JSON body on `admin/repositories/reload` | regular result, `isSuccess()` is `false` |
 | anything else | `PhormClientException` carrying the body |
 
 The check is representation aware, because the same duality applies to the XML and HTML variants.
@@ -89,6 +92,39 @@ instead of re-modelling them. Two consequences worth knowing:
 * Every result also carries `getAsJson()` and `getRawResponse()`, so nothing the typed model drops
   is out of reach.
 
+### The admin APIs have their own token
+
+phorm checks the `X-Token` header of `/api/admin/*` against `phorm.api.admin.token`, a different
+value than `phorm.api.requiredtoken`. The client therefore holds a second, optional token
+(`Builder.adminToken`) and sends it to the admin APIs only - the validation token never reaches
+them and the admin token never reaches the validation APIs. Without an admin token an admin call is
+refused with a `REQUEST_ERROR` before anything is sent, because phorm would reject it anyway.
+
+phorm registers the admin APIs only when the admin token is configured on its side, so a 404 from
+an admin path is reported as "admin APIs disabled" rather than as an unexpected response.
+
+### A failed reload is a result, not an error
+
+A failed repository reload is answered with HTTP 500 and a regular body (`success:false` plus an
+`errors` array), and phorm keeps the previously loaded VES active. That is the same situation as an
+invalid document: the server did its job and reports a negative outcome. Turning it into a
+`SERVICE_UNAVAILABLE` exception would suggest that retrying helps, when the cause is almost always a
+broken repository configuration. So `reloadAdminRepositories` treats a 500 with a JSON object body
+as a regular `PhormRepositoryReloadResult`; any other 500 is still a `SERVICE_UNAVAILABLE`.
+
+### Only major and minor version
+
+`getServerVersion ()` is the client for the version API added in phorm 2.2.18
+([phorm #25](https://github.com/phax/phorm/issues/25)). It exists for feature detection, and features
+only change with a minor version, so phorm reports `major` and `minor` only: the micro version of a
+publicly reachable instance would tell an attacker which fixes are missing. `PhormServerVersion` is
+therefore a plain value with `isAtLeast (major, minor)` and `Comparable`, not a full version model.
+The API also offers `text/plain` (`2.3`) for scripts and monitoring; `getServerVersionAsText ()`
+passes it through like the `...AsXML` and `...AsHtml` variants do, using the new
+`EPhormResponseFormat.TEXT`.
+A phorm that predates the API answers 404, which maps to `null` rather than an exception, because
+"older than the version API" is a valid answer to the question.
+
 ## Dependency state
 
 The library depends on `ph-httpclient`, `ph-json`, `ph-xml`, `phive-result` and `ddd-model`.
@@ -110,16 +146,20 @@ beyond the phive version.
 
 ## API shape
 
-One class per concern, nine in total:
+One class per concern, thirteen in total:
 
 | Class | Role |
 |---|---|
 | `PhormClient` | the client, built through `PhormClient.builder ()`, `AutoCloseable` |
 | `PhormValidationResult` | typed result of the three validating APIs |
-| `PhormVESID` | one entry of `GET /api/get/vesids` |
+| `PhormVESID` | one entry of `GET /api/get/vesids`, including the external repository it came from |
+| `PhormServerVersion` | major and minor version from `GET /api/get/version` |
+| `PhormRepositoryStatus` | result of `GET /api/admin/repositories` |
+| `PhormRepository` | one external repository with its VES count |
+| `PhormRepositoryReloadResult` | result of `POST /api/admin/repositories/reload` |
 | `PhormRawResponse` | status code, content type, unparsed body - the escape hatch |
 | `PhormClientException` | everything that prevented a result, carrying the raw response |
-| `EPhormResponseFormat` | JSON / XML / HTML, mapped to the `Accept` header |
+| `EPhormResponseFormat` | JSON / XML / HTML / plain text, mapped to the `Accept` header |
 | `EPhormHybridCountry` | `DE` / `FR` / `OTHER` for the hybrid PDF API, so kaltblut is not needed |
 | `EPhormErrorType` | why a call did not yield a result - faulty request, unavailable service, unusable answer |
 | `CPhormClient` | header name, API paths, query and JSON field names |
