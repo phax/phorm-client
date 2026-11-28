@@ -58,6 +58,7 @@ import com.helger.httpclient.HttpClientManager;
 import com.helger.httpclient.HttpClientSettings;
 import com.helger.json.IJson;
 import com.helger.json.IJsonArray;
+import com.helger.json.IJsonObject;
 import com.helger.mime.CMimeType;
 import com.helger.mime.IMimeType;
 import com.helger.peppolid.factory.IIdentifierFactory;
@@ -65,9 +66,11 @@ import com.helger.peppolid.factory.SimpleIdentifierFactory;
 import com.helger.xml.microdom.IMicroDocument;
 
 /**
- * Client for the phorm REST API. It covers the version API and all five validation APIs phorm
- * offers:
+ * Client for the phorm REST API. It covers the liveness and readiness APIs, the version API and
+ * all five validation APIs phorm offers:
  * <ul>
+ * <li><code>GET /ping</code> - {@link #isAlive()}</li>
+ * <li><code>GET /ready</code> - {@link #isReady()}</li>
  * <li><code>GET /api/get/version</code> - {@link #getServerVersion()},
  * {@link #getServerVersionAsText()}</li>
  * <li><code>GET /api/get/vesids</code> - {@link #getAllVESIDs(boolean)}</li>
@@ -585,6 +588,59 @@ public class PhormClient implements AutoCloseable
   }
 
   /**
+   * Interpret the response of the liveness API.
+   *
+   * @param aResponse
+   *        The response to interpret. May not be <code>null</code>.
+   * @return <code>true</code> for HTTP 200 with the plain text body <code>pong</code>.
+   * @throws PhormClientException
+   *         On any other response.
+   */
+  @VisibleForTesting
+  static boolean getLiveness (@NonNull final PhormRawResponse aResponse) throws PhormClientException
+  {
+    _checkForError (aResponse, null);
+
+    final String sBody = aResponse.getBodyAsString ();
+    if (sBody == null || !CPhormClient.PING_RESPONSE.equals (sBody.trim ()))
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response of the liveness API is not '" +
+                                                                      CPhormClient.PING_RESPONSE +
+                                                                      "'",
+                                      aResponse);
+    return true;
+  }
+
+  /**
+   * Interpret the response of the readiness API.
+   *
+   * @param aResponse
+   *        The response to interpret. May not be <code>null</code>.
+   * @return <code>true</code> for HTTP 200 with <code>{"ready":true}</code>, <code>false</code> for
+   *         HTTP 503.
+   * @throws PhormClientException
+   *         On any other response.
+   */
+  @VisibleForTesting
+  static boolean getReadiness (@NonNull final PhormRawResponse aResponse) throws PhormClientException
+  {
+    // Any HTTP 503 means "not ready" - also one from a proxy in front of phorm, which has no phorm
+    // body
+    if (aResponse.getStatusCode () == CHttp.HTTP_SERVICE_UNAVAILABLE)
+      return false;
+    _checkForError (aResponse, null);
+
+    final IJsonObject aJson = aResponse.getBodyAsJsonObject ();
+    if (aJson == null || !aJson.getAsBoolean (CPhormClient.JSON_READY, false))
+      throw new PhormClientException (EPhormErrorType.RESPONSE_ERROR,
+                                      "The phorm response of the readiness API carries no '\"" +
+                                                                      CPhormClient.JSON_READY +
+                                                                      "\":true'",
+                                      aResponse);
+    return true;
+  }
+
+  /**
    * @return The base URL of the phorm instance, without a trailing slash. Never <code>null</code>.
    */
   @NonNull
@@ -675,6 +731,73 @@ public class PhormClient implements AutoCloseable
                                       "The phorm response carries no plain text version",
                                       aResponse);
     return sBody.trim ();
+  }
+
+  /**
+   * Check whether the target phorm instance is running, e.g. for a liveness check or as a
+   * keep-alive. Calls <code>GET /ping</code> - in contrast to all other APIs this path is relative
+   * to the base URL and not to the API path. No token is sent.
+   * <p>
+   * phorm always answers with the plain text <code>pong</code>, also while it is still loading its
+   * validation rules - use {@link #isReady()} to check whether validation requests can be served.
+   *
+   * @return Always <code>true</code> - everything else is an exception.
+   * @throws PhormClientException
+   *         On a transport problem (phorm not reachable at all) or an unexpected response.
+   * @since 1.1.0
+   */
+  public boolean isAlive () throws PhormClientException
+  {
+    final String sURL = m_sBaseURL + CPhormClient.PATH_PING;
+    if (LOGGER.isDebugEnabled ())
+      LOGGER.debug ("Invoking phorm API 'GET " + sURL + "'");
+    return getLiveness (_execute (new HttpGet (sURL), EPhormResponseFormat.TEXT, null));
+  }
+
+  /**
+   * Check whether the target phorm instance can currently serve validation requests, e.g. for a
+   * readiness check. Calls <code>GET /ready</code> - in contrast to all other APIs this path is
+   * relative to the base URL and not to the API path. No token is sent.
+   * <p>
+   * phorm answers HTTP 200 with <code>{"ready":true}</code> once all validation rules are loaded,
+   * and HTTP 503 with <code>{"ready":false}</code> before that.
+   *
+   * @return <code>true</code> if phorm is ready, <code>false</code> if it is not (yet) - that is any
+   *         HTTP 503.
+   * @throws PhormClientException
+   *         On a transport problem (phorm not reachable at all), on an unexpected response, or if
+   *         the phorm instance does not offer the readiness API (phorm older than 2.2.18).
+   * @since 1.1.0
+   */
+  public boolean isReady () throws PhormClientException
+  {
+    final String sURL = m_sBaseURL + CPhormClient.PATH_READY;
+    if (LOGGER.isDebugEnabled ())
+      LOGGER.debug ("Invoking phorm API 'GET " + sURL + "'");
+    final PhormRawResponse aResponse = _execute (new HttpGet (sURL), EPhormResponseFormat.JSON, null);
+
+    if (aResponse.getStatusCode () == CHttp.HTTP_NOT_FOUND)
+    {
+      // Use the version API to tell an old phorm from a wrong base URL
+      final PhormServerVersion aVersion = getServerVersion ();
+      final String sMsg;
+      if (aVersion == null)
+        sMsg = "The phorm instance at '" +
+               m_sBaseURL +
+               "' does not offer the readiness API '" +
+               CPhormClient.PATH_READY +
+               "' - it is older than phorm 2.2.18";
+      else
+        sMsg = "The phorm instance at '" +
+               m_sBaseURL +
+               "' with version " +
+               aVersion.getAsString () +
+               " answered HTTP 404 for the readiness API '" +
+               CPhormClient.PATH_READY +
+               "'";
+      throw new PhormClientException (EPhormErrorType.REQUEST_ERROR, sMsg, aResponse);
+    }
+    return getReadiness (aResponse);
   }
 
   /**

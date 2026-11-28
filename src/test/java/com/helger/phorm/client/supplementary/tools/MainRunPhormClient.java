@@ -47,6 +47,13 @@ public final class MainRunPhormClient
   {
     try (final PhormClient aClient = PhormClient.builder ().baseURL (BASE_URL).token (API_TOKEN).build ())
     {
+      // 0. Can this instance serve validation requests yet?
+      if (!aClient.isReady ())
+      {
+        LOGGER.warn ("phorm is not ready yet - try again later");
+        return;
+      }
+
       // 1. What can this instance validate?
       for (final PhormVESID aVESID : aClient.getAllVESIDs ())
         LOGGER.info (aVESID.getVESID ().getAsSingleID () + " - " + aVESID.getName ());

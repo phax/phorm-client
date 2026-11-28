@@ -27,11 +27,13 @@ import static org.junit.Assert.fail;
 import java.nio.charset.StandardCharsets;
 
 import org.apache.hc.core5.http.HttpEntity;
+import org.jspecify.annotations.NonNull;
 import org.junit.Test;
 
 import com.helger.base.io.nonblocking.NonBlockingByteArrayInputStream;
 import com.helger.base.io.nonblocking.NonBlockingByteArrayOutputStream;
 import com.helger.base.io.stream.HasInputStream;
+import com.helger.http.CHttp;
 import com.helger.mime.CMimeType;
 import com.helger.peppolid.factory.SimpleIdentifierFactory;
 
@@ -168,6 +170,87 @@ public final class PhormClientTest
         assertEquals (-1, ex.getStatusCode ());
       }
     }
+  }
+
+  @NonNull
+  private static PhormRawResponse _createJsonResponse (final int nStatusCode, @NonNull final String sBody)
+  {
+    return new PhormRawResponse (nStatusCode,
+                                 "application/json;charset=UTF-8",
+                                 StandardCharsets.UTF_8,
+                                 sBody.getBytes (StandardCharsets.UTF_8));
+  }
+
+  private static void _assertReadinessError (@NonNull final PhormRawResponse aResponse,
+                                             @NonNull final EPhormErrorType eExpectedErrorType)
+  {
+    try
+    {
+      PhormClient.getReadiness (aResponse);
+      fail ("Expected a PhormClientException");
+    }
+    catch (final PhormClientException ex)
+    {
+      assertEquals (eExpectedErrorType, ex.getErrorType ());
+      assertEquals (aResponse.getStatusCode (), ex.getStatusCode ());
+    }
+  }
+
+  private static void _assertLivenessError (@NonNull final PhormRawResponse aResponse,
+                                            @NonNull final EPhormErrorType eExpectedErrorType)
+  {
+    try
+    {
+      PhormClient.getLiveness (aResponse);
+      fail ("Expected a PhormClientException");
+    }
+    catch (final PhormClientException ex)
+    {
+      assertEquals (eExpectedErrorType, ex.getErrorType ());
+      assertEquals (aResponse.getStatusCode (), ex.getStatusCode ());
+    }
+  }
+
+  @Test
+  public void testLiveness () throws Exception
+  {
+    assertTrue (PhormClient.getLiveness (new PhormRawResponse (CHttp.HTTP_OK,
+                                                               "text/plain;charset=ISO-8859-1",
+                                                               StandardCharsets.ISO_8859_1,
+                                                               "pong".getBytes (StandardCharsets.ISO_8859_1))));
+
+    // HTTP 200 must carry "pong" - e.g. not the landing page of something else
+    _assertLivenessError (new PhormRawResponse (CHttp.HTTP_OK,
+                                                "text/html",
+                                                StandardCharsets.UTF_8,
+                                                "<html/>".getBytes (StandardCharsets.UTF_8)),
+                          EPhormErrorType.RESPONSE_ERROR);
+    _assertLivenessError (PhormRawResponse.createNoContent (CHttp.HTTP_OK), EPhormErrorType.RESPONSE_ERROR);
+
+    // Error codes are errors
+    _assertLivenessError (PhormRawResponse.createNoContent (CHttp.HTTP_NOT_FOUND), EPhormErrorType.REQUEST_ERROR);
+    _assertLivenessError (PhormRawResponse.createNoContent (CHttp.HTTP_SERVICE_UNAVAILABLE),
+                          EPhormErrorType.SERVICE_UNAVAILABLE);
+  }
+
+  @Test
+  public void testReadiness () throws Exception
+  {
+    assertTrue (PhormClient.getReadiness (_createJsonResponse (CHttp.HTTP_OK, "{\"ready\":true}")));
+    assertFalse (PhormClient.getReadiness (_createJsonResponse (CHttp.HTTP_SERVICE_UNAVAILABLE,
+                                                                "{\"ready\":false}")));
+    // A HTTP 503 without the phorm body, e.g. from a proxy in front of phorm, is "not ready" too
+    assertFalse (PhormClient.getReadiness (PhormRawResponse.createNoContent (CHttp.HTTP_SERVICE_UNAVAILABLE)));
+
+    // HTTP 200 must carry "ready":true
+    _assertReadinessError (_createJsonResponse (CHttp.HTTP_OK, "{\"ready\":false}"), EPhormErrorType.RESPONSE_ERROR);
+    _assertReadinessError (_createJsonResponse (CHttp.HTTP_OK, "{}"), EPhormErrorType.RESPONSE_ERROR);
+    _assertReadinessError (PhormRawResponse.createNoContent (CHttp.HTTP_OK), EPhormErrorType.RESPONSE_ERROR);
+
+    // Other error codes are errors
+    _assertReadinessError (PhormRawResponse.createNoContent (CHttp.HTTP_INTERNAL_SERVER_ERROR),
+                           EPhormErrorType.SERVICE_UNAVAILABLE);
+    _assertReadinessError (PhormRawResponse.createNoContent (CHttp.HTTP_BAD_REQUEST), EPhormErrorType.REQUEST_ERROR);
   }
 
   @Test

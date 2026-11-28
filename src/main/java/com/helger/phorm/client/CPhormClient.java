@@ -32,6 +32,20 @@ public final class CPhormClient
   /** The default path below which all APIs reside */
   public static final String DEFAULT_API_PATH = "/api";
 
+  /**
+   * Path of the liveness API. In contrast to all other paths it is relative to the base URL and not
+   * to the API path.
+   */
+  public static final String PATH_PING = "/ping";
+  /** The plain text body of the liveness API */
+  public static final String PING_RESPONSE = "pong";
+
+  /**
+   * Path of the readiness API. In contrast to all other paths it is relative to the base URL and
+   * not to the API path.
+   */
+  public static final String PATH_READY = "/ready";
+
   /** Path of the "validate against a specific VESID" API. The VESID is appended. */
   public static final String PATH_VALIDATE = "/validate/";
   /** Path of the "get all VESIDs" API */
@@ -85,6 +99,9 @@ public final class CPhormClient
   public static final String JSON_MAJOR = "major";
   /** JSON field of the version API with the minor version */
   public static final String JSON_MINOR = "minor";
+
+  /** JSON field of the readiness API */
+  public static final String JSON_READY = "ready";
 
   /** JSON field of the admin APIs with the absolute path of the repository configuration file */
   public static final String JSON_CONFIG_FILE = "configFile";

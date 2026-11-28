@@ -83,6 +83,8 @@ verification service that is merely down must not turn into a rejected document.
 
 | phorm API | Method |
 |---|---|
+| `GET /ping` | `isAlive ()` |
+| `GET /ready` | `isReady ()` |
 | `GET /api/get/version` | `getServerVersion ()`, `getServerVersionAsText ()` |
 | `GET /api/get/vesids` | `getAllVESIDs ()` / `getAllVESIDs (boolean)` |
 | `POST /api/validate/{vesid}` | `validate (...)`, `validateAsXML (...)`, `validateAsHtml (...)` |
@@ -99,6 +101,20 @@ the micro version. `getServerVersionAsText ()` requests the
 404, and both methods then return `null`.
 The API exists from phorm 2.2.18 on ([phorm #25](https://github.com/phax/phorm/issues/25)).
 Feature checks therefore only work against phorm 2.2.18 or later; `null` means older than that.
+
+`isAlive ()` is the liveness check: it calls `GET /ping` and returns `true` if phorm answers with
+the plain text `pong`. phorm does this as soon as it runs, also while it is still loading its
+validation rules. Anything else - not reachable, an HTTP error or a different body - is a
+`PhormClientException`. Like `/ready`, `/ping` is relative to the base URL, and no token is sent.
+
+`isReady ()` tells whether phorm can currently serve validation requests, e.g. for a readiness check.
+It returns `true` for HTTP 200 with `{"ready":true}` and `false` for any HTTP 503 - phorm answers
+that while it is still loading its validation rules after the startup. A phorm that cannot be reached
+at all is a `PhormClientException` of type `SERVICE_UNAVAILABLE`. In contrast to all other APIs,
+`/ready` is relative to the base URL and not to the API path, and no token is sent.
+The API exists from phorm 2.2.18 on ([phorm #26](https://github.com/phax/phorm/issues/26)). An older
+phorm answers HTTP 404, and `isReady ()` then throws a `PhormClientException` of type `REQUEST_ERROR`
+that names the reason, using `getServerVersion ()` to tell an old phorm from a wrong base URL.
 
 Each `PhormVESID` returned by `getAllVESIDs` carries `getRepositoryID ()`: the ID of the external
 repository the rule set was loaded from, or `null` for a rule set built into phorm (`isBuiltIn ()`).
@@ -204,6 +220,10 @@ v1.1.0 - work in progress
   ([phorm #25](https://github.com/phax/phorm/issues/25)), returning the major and minor version as
   `PhormServerVersion`, or `null` for a phorm without this API. `getServerVersionAsText ()` returns
   the `text/plain` representation, e.g. `2.3`
+* Added `isAlive ()` for the liveness API `GET /ping`, returning `true` if phorm answers `pong`
+* Added `isReady ()` for the readiness API `GET /ready` of phorm 2.2.18 and later
+  ([phorm #26](https://github.com/phax/phorm/issues/26)), returning `true` for HTTP 200 and `false`
+  for HTTP 503
 * Added `PhormVESID.getRepositoryID ()` and `isBuiltIn ()`, filled from the `repository` field of
   `/api/get/vesids`
 
